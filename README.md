@@ -1,83 +1,51 @@
 # git-event-hub
 
-This project was created with [Better Fullstack](https://github.com/Marve10s/Better-Fullstack), a high-performance Go stack.
+Created with [Better Fullstack](https://github.com/Marve10s/Better-Fullstack).
 
-## Features
+## Applications and resources
 
-- **Go** - Fast, reliable, and efficient programming language
-- **Echo** - High performance, minimalist Go web framework
-- **GORM** - Full-featured ORM for Go
-- **oapi-codegen** - Typed OpenAPI code generation
-- **Zap** - Blazing fast, structured logging
-- **Testing** - testcontainers, testify
-- **Validation** - validator
-- **Code Quality** - golangci-lint
-- **Migrations** - golang-migrate
-- **Dependency Injection** - fx
+- **react-vite** (typescript, frontend): `apps/web`; part `frontend:typescript:react-vite`
+- **echo** (go, backend): `apps/server`; part `backend:go:echo`
+- **sqlite** (universal, database): `packages/db`; part `database:universal:sqlite`
+- **devcontainer** (universal, developerEnvironment): `.`; part `developerenvironment:universal:devcontainer`
+- **docker-compose** (universal, containerOrchestration): `.`; part `containerorchestration:universal:docker-compose`
+- **github-actions** (universal, continuousIntegration): `.`; part `continuousintegration:universal:github-actions`
 
-## Prerequisites
+## Setup
 
-- [Go](https://go.dev/) 1.25 or higher
+Install the SDKs for the selected languages before preparing dependencies. SwiftUI needs macOS, Xcode, and XcodeGen; Kotlin Android apps need a JDK and Android SDK; Flutter needs the Flutter SDK. Rust web apps also need the WebAssembly target and Trunk or Dioxus CLI.
 
-## Getting Started
+JavaScript dependencies are installed at the workspace root. Each native application keeps its own toolchain. Native package scripts require `bash` on PATH; install Git Bash on Windows. Run the shell commands below in Bash.
 
-First, copy the environment file:
+If dependencies were not prepared during creation, run:
 
-```bash
-cp .env.example .env
+```sh
+bun install
+(cd apps/server && go mod tidy)
 ```
 
-Then, install dependencies and run the server:
+Copy each application's `.env.example` to `.env` when present and configure database credentials before starting database-backed services.
 
-```bash
-go mod tidy
-go run cmd/server/main.go
+## Local development
+
+Start the selected web applications and backend services together:
+
+```sh
+bun run dev
 ```
 
-The server will be running at [http://localhost:8080](http://localhost:8080).
+The supervisor stops the other services when one exits. Native mobile applications run separately so you can choose a simulator or device. Open Kotlin applications in Android Studio.
 
-## Database Setup
+### Go Echo
 
-This project uses GORM with SQLite by default. To configure the database:
+Run independently from the project root:
 
-1. Copy the environment file:
-
-```bash
-cp .env.example .env
+```sh
+cd apps/server && go run cmd/server/main.go
 ```
 
-2. Update `DATABASE_URL` in `.env` with your database connection string.
+## Connections
 
-Supported databases:
+- **Go Echo** (default client connection): `http://localhost:8080`, health endpoint `http://localhost:8080/health`.
 
-- SQLite (default): `DATABASE_URL=./data.db`
-- PostgreSQL: `DATABASE_URL=postgres://user:pass@localhost:5432/dbname`
-
-## Project Structure
-
-```
-git-event-hub/
-├── go.mod                # Module definition
-├── cmd/
-│   └── server/           # HTTP server entry point
-│       └── main.go
-├── internal/
-│   ├── database/         # Database configuration
-│   │   └── database.go
-│   ├── models/           # GORM models
-│   │   └── models.go
-│   └── handlers/         # HTTP handlers
-│       └── handlers.go
-├── .env.example          # Environment variables template
-└── .gitignore
-```
-
-## Available Commands
-
-- `go build ./...`: Build all packages
-- `go run cmd/server/main.go`: Run the server
-- `go test ./...`: Run all tests
-- `go fmt ./...`: Format code
-- `go vet ./...`: Run static analysis
-- `go generate ./internal/api`: Regenerate OpenAPI types
-- `migrate -path migrations -database "$DATABASE_URL" up`: Run migrations
+Cross-language clients communicate over HTTP. Framework-specific clients such as tRPC are used only with compatible backends. Generated connection files identify the default backend; additional services retain their own paths and endpoints.

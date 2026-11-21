@@ -4,36 +4,45 @@ This file provides context about the project for AI assistants.
 
 ## Project Overview
 
-- **Ecosystem**: Go
+- **Ecosystem**: Typescript
 
 ## Tech Stack
 
-- Web Framework: echo
-- Database: gorm
-- API: oapi-codegen
-- Logging: zap
-- Testing: testcontainers, testify
-- Validation: validator
-- Code Quality: golangci-lint
-- Migrations: golang-migrate
-- Dependency Injection: fx
+- **Runtime**: bun
+- **Package Manager**: bun
+
+### Frontend
+
+- Framework: react-vite
+- CSS: tailwind
+- UI Library: shadcn-ui
+
+### Database
+
+- Database: sqlite
+
+### Additional Features
+
+- Testing: vitest
 
 ## Project Structure
 
 ```
 git-event-hub/
-├── go.mod           # Module definition
-├── cmd/
-│   └── server/      # Server entry point
-├── internal/        # Internal packages
+├── apps/
+│   ├── web/         # Frontend application
+├── packages/
+│   └── db/          # Database schema
 ```
 
 ## Common Commands
 
-- `go mod tidy` - Install dependencies
-- `go run cmd/server/main.go` - Start server
-- `go test ./...` - Run tests
-- `go fmt ./...` - Format code
+- `bun install` - Install dependencies
+- `bun dev` - Start development server
+- `bun build` - Build for production
+- `bun test` - Run tests
+- `bun db:push` - Push database schema
+- `bun db:studio` - Open database UI
 
 ## Better Fullstack project context
 
@@ -48,11 +57,18 @@ git-event-hub/
 - `backend.logging:go:zap`. It belongs to `backend:go:echo`. Evidence is `listed` with `unverified` freshness. Verification maintainer: @Marve10s.
 - `backend.migrations:go:golang-migrate`. It belongs to `backend:go:echo`. Evidence is `listed` with `unverified` freshness. Verification maintainer: @Marve10s.
 - `backend.orm:go:gorm`. It belongs to `backend:go:echo`. Evidence is `listed` with `unverified` freshness. Verification maintainer: @Marve10s.
-- `backend.testing:go:testcontainers`. It belongs to `backend:go:echo`. Evidence is `listed` with `unverified` freshness. Verification maintainer: @Marve10s.
+- `backend.testing:go:gomock`. It belongs to `backend:go:echo`. Evidence is `listed` with `unverified` freshness. Verification maintainer: @Marve10s.
 - `backend.testing:go:testify`. It belongs to `backend:go:echo`. Evidence is `listed` with `unverified` freshness. Verification maintainer: @Marve10s.
 - `backend.validation:go:validator`. It belongs to `backend:go:echo`. Evidence is `listed` with `unverified` freshness. Verification maintainer: @Marve10s.
 - `backend:go:echo`. Its generated target is `apps/server`. Evidence is `listed` with `unverified` freshness. Verification maintainer: @Marve10s.
+- `containerOrchestration:universal:docker-compose`. Evidence is `listed` with `unverified` freshness. Verification maintainer: @Marve10s.
+- `continuousIntegration:universal:github-actions`. Evidence is `listed` with `unverified` freshness. Verification maintainer: @Marve10s.
 - `database:universal:sqlite`. Its generated target is `packages/db`. Evidence is `listed` with `unverified` freshness. Verification maintainer: @Marve10s.
+- `developerEnvironment:universal:devcontainer`. Evidence is `listed` with `unverified` freshness. Verification maintainer: @Marve10s.
+- `frontend.css:typescript:tailwind`. It belongs to `frontend:typescript:react-vite`. Evidence is `listed` with `unverified` freshness. Verification maintainer: @Marve10s.
+- `frontend.forms:typescript:react-hook-form`. It belongs to `frontend:typescript:react-vite`. Evidence is `listed` with `unverified` freshness. Verification maintainer: @Marve10s.
+- `frontend.ui:typescript:shadcn-ui`. It belongs to `frontend:typescript:react-vite`. Evidence is `listed` with `unverified` freshness. Verification maintainer: @Marve10s.
+- `frontend:typescript:react-vite`. Its generated target is `apps/web`. Evidence is `listed` with `unverified` freshness. Verification maintainer: @Marve10s.
 
 ### Installed-version authority
 

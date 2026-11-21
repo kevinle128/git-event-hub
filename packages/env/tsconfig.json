@@ -1,0 +1,3 @@
+{
+  "extends": "@git-event-hub/config/tsconfig.base.json"
+}
