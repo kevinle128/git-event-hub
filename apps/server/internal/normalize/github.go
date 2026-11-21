@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
+	"strings"
 
 	"git-event-hub/pkg/prevents"
 )
@@ -28,8 +29,20 @@ type ghPRRef struct {
 		SHA string `json:"sha"`
 	} `json:"head"`
 	Base struct {
-		Ref string `json:"ref"`
+		Ref  string `json:"ref"`
+		Repo struct {
+			URL string `json:"url"`
+		} `json:"repo"`
 	} `json:"base"`
+}
+
+// sameRepo reports whether a pull request reference has its base in the
+// repository of the payload. GitHub can list pull requests of other
+// repositories (for example a fork) that share the head branch; their
+// numbers mean nothing in this repository. A reference without a URL is
+// kept.
+func sameRepo(apiURL, fullName string) bool {
+	return apiURL == "" || strings.HasSuffix(strings.ToLower(apiURL), "/repos/"+strings.ToLower(fullName))
 }
 
 type ghPullRequest struct {
@@ -156,6 +169,9 @@ func userPtr(u *ghUser) *string {
 func ghPullRequests(c Context, repo, sha string, refs []ghPRRef) []draft {
 	var out []draft
 	for _, r := range refs {
+		if !sameRepo(r.Base.Repo.URL, repo) {
+			continue
+		}
 		d := draft{repo: repo, number: r.Number, head: firstNonEmpty(r.Head.SHA, sha), base: r.Base.Ref, branch: r.Head.Ref}
 		if e, ok := c.index().Get(prevents.GitHub, repo, r.Number); ok {
 			d.author = e.Author
@@ -362,6 +378,7 @@ func ghIssueCommentDrafts(body []byte, c Context) ([]draft, error) {
 			UpdatedAt string `json:"updated_at"`
 		} `json:"comment"`
 		Repository ghRepo `json:"repository"`
+		Sender     ghUser `json:"sender"`
 	}
 	if err := json.Unmarshal(body, &p); err != nil {
 		return nil, err
@@ -381,8 +398,14 @@ func ghIssueCommentDrafts(body []byte, c Context) ([]draft, error) {
 	if e, ok := c.index().Get(prevents.GitHub, base.repo, base.number); ok {
 		base.head, base.base, base.branch = e.HeadSHA, e.BaseRef, e.Branch
 	}
+	// An edit replaces the text, so the editor is the author of what the
+	// comment now says. The account filter then checks the editor.
+	login := p.Comment.User.Login
+	if p.Action == "edited" && p.Sender.Login != "" && !strings.EqualFold(p.Sender.Login, login) {
+		login = p.Sender.Login
+	}
 	return commentDrafts(c, base, comment{
 		ID: strconv.FormatInt(p.Comment.ID, 10), URL: p.Comment.HTMLURL, Body: p.Comment.Body,
-		Login: p.Comment.User.Login, At: parseTime(p.Comment.UpdatedAt), Edited: p.Action == "edited",
+		Login: login, At: parseTime(p.Comment.UpdatedAt), Edited: p.Action == "edited",
 	}), nil
 }

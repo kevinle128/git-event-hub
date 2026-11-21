@@ -62,6 +62,9 @@ sources:
   - {name: old, type: gitlab, secretEnv: T_GL, enabled: false}
 api: {tokenEnv: T_API}
 server: {maxBodyBytes: 2000000}
+defaults:
+  commentAuthors: ["*[bot]", "ocr-review-bot"]
+  reviewAuthors: ["kevinle128-ocr[bot]", "ocr-review-bot"]
 subscribers:
   - id: kevin
     identities: {github: [kevinle128], gitlab: [kevin.le]}

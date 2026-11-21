@@ -281,6 +281,15 @@ func TestGitHubStatus(t *testing.T) {
 	})
 }
 
+func TestGitHubCheckRefOfAnotherRepositoryIsIgnored(t *testing.T) {
+	idx := fakeIndex{map[string]Entry{key(prevents.GitHub, "kevinle128/OpenMausBot", 40): {Number: 40, Author: "kevinle128", Branch: "b", BaseRef: "main", HeadSHA: "0bc93cc2e4122a993e4a73c4531beae821cddd67"}}}
+	body := testutil.Fixture(t, "github/check_suite.completed-third-party-foreign-pr.json")
+	events, drops := run(t, idx, func(c Context) ([]prevents.Event, error) { return GitHub("check_suite", body, c) })
+	if len(events) != 0 || len(drops) != 1 || drops[0] != DropNoPullRequest {
+		t.Fatalf("events = %d drops = %v", len(events), drops)
+	}
+}
+
 func TestGitHubIssueComment(t *testing.T) {
 	t.Run("review summary becomes review.finished with the reviewed sha from the machine block", func(t *testing.T) {
 		body := testutil.Fixture(t, "github/issue_comment.ocr-summary.json")
@@ -303,6 +312,19 @@ func TestGitHubIssueComment(t *testing.T) {
 		events, _ := run(t, nil, func(c Context) ([]prevents.Event, error) { return GitHub("issue_comment", body, c) })
 		if len(events) != 1 || events[0].Kind != prevents.KindReviewFinished {
 			t.Fatalf("events = %+v", events)
+		}
+		if got := events[0].Commenter(); got != "kevinle128-ocr[bot]" {
+			t.Errorf("commenter = %q", got)
+		}
+	})
+	t.Run("edit by another account names the editor as commenter", func(t *testing.T) {
+		body := testutil.Fixture(t, "github/issue_comment.ocr-summary-edited-by-person.json")
+		events, _ := run(t, nil, func(c Context) ([]prevents.Event, error) { return GitHub("issue_comment", body, c) })
+		if len(events) != 1 || events[0].Kind != prevents.KindReviewFinished {
+			t.Fatalf("events = %+v", events)
+		}
+		if got := events[0].Commenter(); got != "kevinle128" {
+			t.Errorf("commenter = %q, want the editor", got)
 		}
 	})
 	t.Run("round comment becomes comment without reading its HTML", func(t *testing.T) {
