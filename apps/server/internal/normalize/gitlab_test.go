@@ -240,3 +240,19 @@ func TestGitLabTagPipelineIsDropped(t *testing.T) {
 		t.Fatalf("events = %+v drops = %v", events, drops)
 	}
 }
+
+func TestGitLabForkPipelineOfAForeignMergeRequestIsDropped(t *testing.T) {
+	var p map[string]any
+	if err := json.Unmarshal(testutil.Fixture(t, "gitlab/pipeline.mr-failed.json"), &p); err != nil {
+		t.Fatal(err)
+	}
+	p["merge_request"].(map[string]any)["target_project_id"] = 999
+	body, err := json.Marshal(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	events, drops := run(t, knownMR(), func(c Context) ([]prevents.Event, error) { return GitLab(body, c) })
+	if len(events) != 0 || len(drops) != 1 || drops[0] != DropNoPullRequest {
+		t.Fatalf("events = %+v drops = %v", events, drops)
+	}
+}

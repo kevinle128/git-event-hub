@@ -133,8 +133,12 @@ func (r *Router) Route(e prevents.Event) ([]Target, string) {
 			return nil, ReasonCommentAuthor
 		}
 	case prevents.KindReviewFinished:
-		if c := e.Commenter(); c == "" || !r.reviewAuthors.Any(c) {
+		c := e.Commenter()
+		if c == "" || !r.reviewAuthors.Any(c) {
 			return nil, ReasonReviewAuthor
+		}
+		if !r.commentAuthors.Any(c) {
+			return nil, ReasonCommentAuthor
 		}
 	}
 	picked := map[int]bool{}

@@ -119,6 +119,30 @@ func TestBackoffDoublesUpToMax(t *testing.T) {
 	assert.Equal(t, []time.Duration{time.Second, 2 * time.Second, 4 * time.Second, 4 * time.Second, 4 * time.Second}, got)
 }
 
+// slowFailing fails every delivery after the manual clock moved on.
+type slowFailing struct {
+	sink.Tracker
+	c *clock
+}
+
+func (s *slowFailing) Deliver(context.Context, []prevents.Event) ([]sink.Outcome, error) {
+	s.c.advance(5 * time.Second)
+	return nil, errors.New("timed out")
+}
+
+func TestBackoffStartsAfterASlowFailedDelivery(t *testing.T) {
+	s := storetest.New(t).Store()
+	a := route.Target{Subscriber: "kevin", Sink: "omb"}
+	queue(t, s, []string{"e1"}, a)
+	c := &clock{t: time.Now()}
+	d := newDispatcher(a.Key(), s, &slowFailing{c: c}, c, metrics.New())
+	n, _ := d.Step(ctx)
+	require.Equal(t, 1, n)
+	n, wait := d.Step(ctx)
+	assert.Equal(t, 0, n, "the retry must wait for the backoff after the failed attempt")
+	assert.InDelta(t, time.Second, wait, float64(time.Millisecond))
+}
+
 type panicky struct{ sink.Tracker }
 
 func (*panicky) Deliver(context.Context, []prevents.Event) ([]sink.Outcome, error) {

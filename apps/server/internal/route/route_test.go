@@ -144,6 +144,24 @@ func TestReviewFinishedNeedsAReviewAuthor(t *testing.T) {
 	assert.Equal(t, []string{"kevin/omb"}, keys(got))
 }
 
+func TestReviewFinishedNeedsACommentAuthorToo(t *testing.T) {
+	r := routeWith(t, `
+sources:
+  - {name: github, secretEnv: GH}
+defaults:
+  reviewAuthors: ["ocr-*"]
+subscribers:
+  - id: kevin
+    identities: {github: [kevinle128]}
+    sinks: [{name: omb, type: omb}]
+`)
+	_, reason := r.Route(ev(prevents.GitHub, "kevinle128/OpenMausBot", "kevinle128", prevents.KindReviewFinished, prevents.ReviewFinishedData{Commenter: "ocr-person"}))
+	assert.Equal(t, ReasonCommentAuthor, reason)
+	got, reason := r.Route(ev(prevents.GitHub, "kevinle128/OpenMausBot", "kevinle128", prevents.KindReviewFinished, prevents.ReviewFinishedData{Commenter: "ocr-review[bot]"}))
+	assert.Empty(t, reason)
+	assert.Equal(t, []string{"kevin/omb"}, keys(got))
+}
+
 func TestBotSuffixFromAPersonIsNotACommentAuthor(t *testing.T) {
 	r := routeWith(t, `
 sources:

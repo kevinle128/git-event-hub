@@ -16,6 +16,10 @@ import (
 	"git-event-hub/pkg/prevents"
 )
 
+// settleTimeout bounds the write of the delivery results, so a stalled
+// database cannot hold a reload or a shutdown forever.
+const settleTimeout = 30 * time.Second
+
 // Dispatcher delivers the outbox of one sink, oldest event first.
 type Dispatcher struct {
 	key     string
@@ -94,9 +98,10 @@ func (d *Dispatcher) Step(ctx context.Context) (int, time.Duration) {
 	for i, it := range items {
 		events[i] = it.Event
 	}
-	started := time.Now()
+	started := d.now()
 	outcomes, derr := d.deliver(ctx, events)
-	took := time.Since(started)
+	finished := d.now()
+	took := finished.Sub(started)
 	byID := make(map[string]sink.Outcome, len(outcomes))
 	for _, o := range outcomes {
 		byID[o.ID] = o
@@ -138,7 +143,7 @@ func (d *Dispatcher) Step(ctx context.Context) (int, time.Duration) {
 			d.metrics.Inc("hub_failed_total", "sink", d.key)
 			d.log.Error("gave up on an event after the last attempt", zap.String("event", it.Event.ID), zap.Int("attempts", attempt), zap.String("error", o.Err))
 		default:
-			r.State, r.Outcome, r.NextAt = store.StatePending, store.OutcomeRetry, now.Add(d.backoff(it.Attempts))
+			r.State, r.Outcome, r.NextAt = store.StatePending, store.OutcomeRetry, finished.Add(d.backoff(it.Attempts))
 			d.metrics.Inc("hub_retried_total", "sink", d.key)
 		}
 		results = append(results, r)
@@ -148,7 +153,9 @@ func (d *Dispatcher) Step(ctx context.Context) (int, time.Duration) {
 	if derr != nil {
 		d.log.Warn("delivery failed", zap.Error(derr), zap.Int("events", len(items)), zap.Int("attempt", items[0].Attempts+1))
 	}
-	if err := d.store.Settle(context.WithoutCancel(ctx), d.key, results); err != nil {
+	sctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), settleTimeout)
+	defer cancel()
+	if err := d.store.Settle(sctx, d.key, results); err != nil {
 		// Without a pause the loop would send the same events again at once.
 		d.log.Error("settle failed; the events will be sent again after a pause", zap.Error(err))
 		return 0, d.poll

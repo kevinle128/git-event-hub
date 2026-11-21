@@ -43,6 +43,7 @@ func New(h *hub.Hub, cfg *config.Store, getenv func(string) string, log *zap.Log
 	s := &Server{hub: h, cfg: cfg, getenv: getenv, log: log, version: version, started: time.Now()}
 	e := echo.New()
 	e.HideBanner, e.HidePort = true, true
+	e.HTTPErrorHandler = errorHandler
 	e.Use(middleware.Recover())
 	e.Use(s.requestLog)
 	api.RegisterHandlers(&guardedRouter{e: e, guard: s.bearer}, s)
@@ -110,6 +111,29 @@ func (s *Server) bearer(next echo.HandlerFunc) echo.HandlerFunc {
 func equal(a, b string) bool {
 	ha, hb := sha256.Sum256([]byte(a)), sha256.Sum256([]byte(b))
 	return subtle.ConstantTimeCompare(ha[:], hb[:]) == 1
+}
+
+// errorHandler answers every error that a handler, the generated parameter
+// binder or Echo itself returns with the Error schema of the API.
+func errorHandler(err error, c echo.Context) {
+	if c.Response().Committed {
+		return
+	}
+	code, msg := http.StatusInternalServerError, http.StatusText(http.StatusInternalServerError)
+	var he *echo.HTTPError
+	if errors.As(err, &he) {
+		code = he.Code
+		if m, ok := he.Message.(string); ok {
+			msg = m
+		} else {
+			msg = http.StatusText(code)
+		}
+	}
+	if c.Request().Method == http.MethodHead {
+		_ = c.NoContent(code)
+		return
+	}
+	_ = c.JSON(code, api.Error{Error: msg})
 }
 
 func (s *Server) requestLog(next echo.HandlerFunc) echo.HandlerFunc {

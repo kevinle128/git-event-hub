@@ -189,3 +189,13 @@ func TestHotReloadAddsASubscriber(t *testing.T) {
 	require.Eventually(t, func() bool { return h.hub.Metrics().Value("hub_config_reload_failed_total") >= 1 }, 5*time.Second, 10*time.Millisecond)
 	assert.Equal(t, 1, h.github("pull_request", "broken", []byte(other)).Accepted)
 }
+
+func TestMalformedQueryAnswersWithTheErrorSchema(t *testing.T) {
+	h := newHub(t, teamConfig)
+	for _, p := range []string{"/api/events?limit=abc", "/api/deliveries?before=x"} {
+		var body map[string]any
+		assert.Equal(t, http.StatusBadRequest, h.get(p, apiToken, &body), p)
+		assert.NotEmpty(t, body["error"], p)
+		assert.NotContains(t, body, "message", p)
+	}
+}

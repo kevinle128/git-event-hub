@@ -157,6 +157,11 @@ func (s *Sink) sendBatch(ctx context.Context, batch []prevents.Event) ([]sink.Ou
 func (s *Sink) sendEach(ctx context.Context, batch []prevents.Event) []sink.Outcome {
 	outs := make([]sink.Outcome, 0, len(batch))
 	for _, e := range batch {
+		// Once the context is done, an event that was not sent gets no
+		// outcome, so no attempt is counted for it.
+		if len(outs) > 0 && ctx.Err() != nil {
+			break
+		}
 		if err := s.post(ctx, e); err != nil {
 			outs = append(outs, sink.Outcome{ID: e.ID, State: sink.Retry, Err: err.Error()})
 			break

@@ -14,6 +14,7 @@ type glUser struct {
 }
 
 type glProject struct {
+	ID                int64  `json:"id"`
 	WebURL            string `json:"web_url"`
 	PathWithNamespace string `json:"path_with_namespace"`
 }
@@ -158,9 +159,10 @@ func glPipelineDrafts(body []byte, c Context) ([]draft, error) {
 			CreatedAt  string `json:"created_at"`
 		} `json:"object_attributes"`
 		MergeRequest *struct {
-			IID          int    `json:"iid"`
-			SourceBranch string `json:"source_branch"`
-			TargetBranch string `json:"target_branch"`
+			IID             int    `json:"iid"`
+			SourceBranch    string `json:"source_branch"`
+			TargetBranch    string `json:"target_branch"`
+			TargetProjectID int64  `json:"target_project_id"`
 		} `json:"merge_request"`
 		Builds []struct {
 			ID            int64  `json:"id"`
@@ -196,6 +198,12 @@ func glPipelineDrafts(body []byte, c Context) ([]draft, error) {
 	d := draft{repo: repo, head: a.SHA, branch: a.Ref, at: parseTime(a.FinishedAt, a.CreatedAt)}
 	switch {
 	case p.MergeRequest != nil && p.MergeRequest.IID > 0:
+		// A fork pipeline runs in the fork, but its merge request number
+		// belongs to the target project.
+		if mr := p.MergeRequest; p.Project.ID != 0 && mr.TargetProjectID != 0 && mr.TargetProjectID != p.Project.ID {
+			c.drop(DropNoPullRequest)
+			return nil, nil
+		}
 		d.number = p.MergeRequest.IID
 		d.base, d.branch = p.MergeRequest.TargetBranch, p.MergeRequest.SourceBranch
 	case a.Tag:
