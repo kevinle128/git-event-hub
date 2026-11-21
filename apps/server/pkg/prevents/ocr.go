@@ -58,11 +58,14 @@ func markerLines(body string) []string {
 	for _, line := range strings.Split(body, "\n") {
 		line = strings.TrimSuffix(line, "\r")
 		if m := ocrFenceRE.FindStringSubmatch(line); m != nil {
+			rest := line[len(m[0]):]
 			switch {
-			case fence == "":
+			// A backtick fence may not hold a backtick in its info string;
+			// such a line is inline code, not a fence (CommonMark 4.5).
+			case fence == "" && (m[1][0] != '`' || !strings.ContainsRune(rest, '`')):
 				fence = m[1]
 				continue
-			case m[1][0] == fence[0] && len(m[1]) >= len(fence) && strings.TrimSpace(line[len(m[0]):]) == "":
+			case fence != "" && m[1][0] == fence[0] && len(m[1]) >= len(fence) && strings.TrimSpace(rest) == "":
 				fence = ""
 				continue
 			}

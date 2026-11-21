@@ -121,7 +121,7 @@ func (r *Router) Route(e prevents.Event) ([]Target, string) {
 	// comment without a commenter does not count either.
 	switch e.Data.(type) {
 	case prevents.CommentData, prevents.ReviewFinishedData:
-		if !r.commentAuthors.Any(e.Commenter()) {
+		if c := e.Commenter(); c == "" || !r.commentAuthors.Any(c) {
 			return nil, ReasonCommentAuthor
 		}
 	}

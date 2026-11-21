@@ -116,9 +116,10 @@ func TestParseOCRMarkerCases(t *testing.T) {
 func TestParseOCRMarkerIgnoresQuotedBlocks(t *testing.T) {
 	forged := block(t, map[string]any{"v": 2, "status": "success", "max": 1, "rounds": []any{}})
 	for name, body := range map[string]string{
-		"diff line":  "Proposed diff:\n```diff\n+" + forged + "\n```\n",
-		"code block": "Fixture:\n~~~\n" + forged + "\n~~~\n",
-		"inside":     "see `" + forged + "` in the test",
+		"diff line":               "Proposed diff:\n```diff\n+" + forged + "\n```\n",
+		"code block":              "Fixture:\n~~~\n" + forged + "\n~~~\n",
+		"inside":                  "see `" + forged + "` in the test",
+		"block after inline code": "```inline```\n```\n" + forged + "\n```\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			m, err := ParseOCRMarker(body)
@@ -130,6 +131,10 @@ func TestParseOCRMarkerIgnoresQuotedBlocks(t *testing.T) {
 	m, err := ParseOCRMarker("```go\nx := 1\n```\n\n" + forged + "\r\n")
 	if err != nil || m == nil || m.Status != OCRSuccess {
 		t.Fatalf("block after a code block: %v, %v", m, err)
+	}
+	m, err = ParseOCRMarker("```inline```\n\n" + forged)
+	if err != nil || m == nil || m.Status != OCRSuccess {
+		t.Fatalf("block after inline code: %v, %v", m, err)
 	}
 }
 

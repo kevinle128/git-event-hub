@@ -1,6 +1,7 @@
 package route
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -101,6 +102,16 @@ func TestRoute(t *testing.T) {
 			assert.Equal(t, tt.want, keys(got))
 		})
 	}
+}
+
+func TestEmptyCommenterIsDroppedWithWildcardAuthors(t *testing.T) {
+	c, err := config.Parse([]byte(strings.Replace(team, "defaults:\n", "defaults:\n  commentAuthors: [\"*\"]\n", 1)))
+	require.NoError(t, err)
+	r, err := New(c)
+	require.NoError(t, err)
+	got, reason := r.Route(ev(prevents.GitHub, "kevinle128/OpenMausBot", "kevinle128", prevents.KindComment, prevents.CommentData{}))
+	assert.Empty(t, got)
+	assert.Equal(t, ReasonCommentAuthor, reason)
 }
 
 func TestKeysListsEnabledSinks(t *testing.T) {
