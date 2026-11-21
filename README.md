@@ -267,7 +267,7 @@ An enabled source whose variable is empty stops the load.
 | `eventsDays` | int | `30` | Events, finished outbox rows and the delivery log. |
 | `indexDays` | int | `60` | PR memory, counted from the last event of the PR. |
 
-The hub prunes once at start and then every hour. Rows of sinks that are no longer configured go after `eventsDays` too.
+The hub prunes once at start and then every hour. Rows of sinks that are no longer configured go after `eventsDays` too. A sink or subscriber that is only disabled keeps its pending rows.
 
 ### `subscribers`
 
@@ -317,7 +317,7 @@ Sink entry:
 - **`rejected`.** The consumer refused the event for good. The hub stops sending it.
 - **Outbox states:** `pending`, `done`, `rejected`, `failed`, `expired`.
 - **Delivery log.** Each attempt writes one entry. Outcomes: `acked`, `retry`, `rejected`, `failed`, `expired`. Read it with `GET /api/deliveries`.
-- A sink that gives no answer for an event counts as `retry`. A panic in a sink counts as a failed call.
+- A sink that gives no answer for any event of a batch counts every event as `retry`. When the sink answers for some events of the batch, an event without an answer was not sent: it stays pending, with no attempt counted and no log entry. A panic in a sink counts as a failed call.
 - The hub saves the result of a call even when the hub stops during the call.
 - A sink is "healthy" when its last call worked. A new sink is healthy until its first failure.
 
@@ -376,7 +376,7 @@ The body is the forge payload as sent. The signature (GitHub `X-Hub-Signature-25
 | `200` | The hub saw this delivery before (`duplicate: true`). |
 | `400` | The payload does not match the forge format, or the delivery has no id. |
 | `401` | The signature or token is missing or wrong. The answer never says which. |
-| `404` | Unknown source name. |
+| `404` | Unknown source name. The hub checks the name before it reads the body. |
 | `413` | The body is larger than `server.maxBodyBytes`. |
 | `500` | Storage error. The forge retries, and the retry is deduplicated. |
 

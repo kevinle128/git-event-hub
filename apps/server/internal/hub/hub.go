@@ -182,7 +182,7 @@ func (h *Hub) pruneLoop(ctx context.Context) {
 	defer t.Stop()
 	for {
 		rt := h.rt.Load()
-		if err := h.store.Prune(ctx, rt.cfg.Retention, rt.router.Keys()); err != nil && ctx.Err() == nil {
+		if err := h.store.Prune(ctx, rt.cfg.Retention, configuredKeys(rt.cfg)); err != nil && ctx.Err() == nil {
 			h.log.Error("prune failed", zap.Error(err))
 		}
 		select {
@@ -202,6 +202,13 @@ type Result struct {
 	Duplicate bool   `json:"duplicate,omitempty"`
 	Ignored   string `json:"ignored,omitempty"`
 	Error     string `json:"error,omitempty"`
+}
+
+// Known reports whether name is a configured source, enabled or not.
+func (h *Hub) Known(name string) bool {
+	rt := h.rt.Load()
+	_, ok := rt.sources[name]
+	return ok || rt.disabled[name]
 }
 
 // MaxBodyBytes returns the body limit in force.

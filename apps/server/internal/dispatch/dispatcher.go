@@ -101,12 +101,25 @@ func (d *Dispatcher) Step(ctx context.Context) (int, time.Duration) {
 	for _, o := range outcomes {
 		byID[o.ID] = o
 	}
+	// When the sink answered for some events of the batch, an event without
+	// an answer was not sent: it stays pending with no attempt counted and no
+	// log row. When the sink answered for none, every event counts as a
+	// retry, so a sink that never answers cannot keep the loop busy.
+	answered := 0
+	for _, it := range items {
+		if _, ok := byID[it.Event.ID]; ok {
+			answered++
+		}
+	}
+	untried := derr == nil && answered > 0
 	results := make([]store.Settlement, 0, len(items))
 	for _, it := range items {
 		o, ok := byID[it.Event.ID]
 		switch {
 		case derr != nil:
 			o = sink.Outcome{State: sink.Retry, Err: derr.Error()}
+		case !ok && untried:
+			continue
 		case !ok:
 			o = sink.Outcome{State: sink.Retry, Err: "sink gave no answer for the event"}
 		}
@@ -132,11 +145,13 @@ func (d *Dispatcher) Step(ctx context.Context) (int, time.Duration) {
 	}
 	// The settle must not stop with the run context: the sink has already
 	// seen the events.
-	if err := d.store.Settle(context.WithoutCancel(ctx), d.key, results); err != nil {
-		d.log.Error("settle failed; the events will be sent again", zap.Error(err))
-	}
 	if derr != nil {
 		d.log.Warn("delivery failed", zap.Error(derr), zap.Int("events", len(items)), zap.Int("attempt", items[0].Attempts+1))
+	}
+	if err := d.store.Settle(context.WithoutCancel(ctx), d.key, results); err != nil {
+		// Without a pause the loop would send the same events again at once.
+		d.log.Error("settle failed; the events will be sent again after a pause", zap.Error(err))
+		return 0, d.poll
 	}
 	return len(items), 0
 }

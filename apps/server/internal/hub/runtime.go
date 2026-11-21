@@ -86,3 +86,15 @@ func Check(getenv func(string) string) func(*config.Config) error {
 		return nil
 	}
 }
+
+// configuredKeys lists the queue of every sink in the configuration, enabled
+// or not. Prune deletes only the rows of sinks that are gone from the file.
+func configuredKeys(cfg *config.Config) []string {
+	var out []string
+	for _, s := range cfg.Subscribers {
+		for _, k := range s.Sinks {
+			out = append(out, config.Key(s.ID, k.Name))
+		}
+	}
+	return out
+}

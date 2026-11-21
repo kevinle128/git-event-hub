@@ -178,3 +178,99 @@ func TestRunStopsWithContext(t *testing.T) {
 		t.Fatal("Run did not stop")
 	}
 }
+
+func TestSettleFailureWaitsBeforeTheNextTry(t *testing.T) {
+	db := storetest.New(t)
+	s := db.Store()
+	a := route.Target{Subscriber: "kevin", Sink: "omb"}
+	queue(t, s, []string{"e1"}, a)
+	stmts := []string{`CREATE TRIGGER refuse_outbox_update BEFORE UPDATE ON outbox BEGIN SELECT RAISE(ABORT, 'read only'); END;`}
+	if db.Dialect == "postgres" {
+		stmts = []string{
+			`CREATE FUNCTION refuse_outbox_update() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'read only'; END $$;`,
+			`CREATE TRIGGER refuse_outbox_update BEFORE UPDATE ON outbox FOR EACH ROW EXECUTE FUNCTION refuse_outbox_update();`,
+		}
+	}
+	for _, q := range stmts {
+		require.NoError(t, db.Gorm().Exec(q).Error)
+	}
+	f := sinktest.NewFake()
+	d := NewDispatcher(a.Key(), s, f, policy(), metrics.New(), zap.NewNop())
+	runCtx, cancel := context.WithTimeout(ctx, 300*time.Millisecond)
+	defer cancel()
+	d.Run(runCtx)
+	assert.LessOrEqual(t, f.Calls(), 2, "a failed settle must not make the loop send the same event again at once")
+	assert.GreaterOrEqual(t, f.Calls(), 1)
+}
+
+// answersFirst answers Retry for the first event of a batch and gives no
+// outcome for the others, as a sink does when it stops at the first failure.
+type answersFirst struct {
+	sink.Tracker
+	seen [][]string
+}
+
+func (a *answersFirst) Deliver(_ context.Context, batch []prevents.Event) ([]sink.Outcome, error) {
+	ids := make([]string, len(batch))
+	for i, e := range batch {
+		ids[i] = e.ID
+	}
+	a.seen = append(a.seen, ids)
+	return []sink.Outcome{{ID: batch[0].ID, State: sink.Retry, Err: "refused"}}, nil
+}
+
+// silent answers for no event and returns no error.
+type silent struct{ sink.Tracker }
+
+func (*silent) Deliver(context.Context, []prevents.Event) ([]sink.Outcome, error) { return nil, nil }
+
+func targetStates(t *testing.T, s *store.Store) map[string]store.TargetState {
+	t.Helper()
+	events, err := s.ListEvents(ctx, store.EventQuery{})
+	require.NoError(t, err)
+	out := map[string]store.TargetState{}
+	for _, e := range events {
+		out[e.Event.ID] = e.Targets[0]
+	}
+	return out
+}
+
+func TestUntriedEventsKeepTheirAttempts(t *testing.T) {
+	s := storetest.New(t).Store()
+	a := route.Target{Subscriber: "kevin", Sink: "omb"}
+	queue(t, s, []string{"e1", "e2", "e3"}, a)
+	k := &answersFirst{}
+	c := &clock{t: time.Now()}
+	d := newDispatcher(a.Key(), s, k, c, metrics.New())
+	for i := 0; i < policy().MaxAttempts; i++ {
+		n, _ := d.Step(ctx)
+		require.Equal(t, 3, n, "step %d", i+1)
+		c.advance(time.Minute)
+	}
+	st := targetStates(t, s)
+	assert.Equal(t, store.StateFailed, st["e1"].State)
+	for _, id := range []string{"e2", "e3"} {
+		assert.Equal(t, store.StatePending, st[id].State, id)
+		assert.Zero(t, st[id].Attempts, id)
+	}
+	log, err := s.ListDeliveries(ctx, store.DeliveryQuery{EventID: "e2"})
+	require.NoError(t, err)
+	assert.Empty(t, log, "an event the sink never tried has no log row")
+
+	d.Step(ctx)
+	require.NotEmpty(t, k.seen)
+	assert.Equal(t, []string{"e2", "e3"}, k.seen[len(k.seen)-1], "the next batch starts with the first untried event")
+}
+
+func TestSinkWithNoAnswerAtAllCountsEveryEventAsRetry(t *testing.T) {
+	s := storetest.New(t).Store()
+	a := route.Target{Subscriber: "kevin", Sink: "omb"}
+	queue(t, s, []string{"e1", "e2"}, a)
+	d := newDispatcher(a.Key(), s, &silent{}, &clock{t: time.Now()}, metrics.New())
+	n, _ := d.Step(ctx)
+	require.Equal(t, 2, n)
+	for id, ts := range targetStates(t, s) {
+		assert.Equal(t, 1, ts.Attempts, id)
+		assert.Equal(t, store.StatePending, ts.State, id)
+	}
+}
