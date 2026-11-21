@@ -79,6 +79,8 @@ func TestBadRequests(t *testing.T) {
 
 	big := []byte(`{"pad":"` + strings.Repeat("x", 2_100_000) + `"}`)
 	assert.Equal(t, http.StatusRequestEntityTooLarge, h.github("pull_request", "big", big).Status)
+	assert.Equal(t, http.StatusNotFound, h.post("/hooks/nope", http.Header{}, big).Status, "an unknown source is refused before the body is read")
+	assert.Zero(t, h.hub.Metrics().Value("hub_refused_total", "source", "nope", "reason", "body_too_large"))
 
 	hd := http.Header{}
 	hd.Set("X-GitHub-Event", "pull_request")

@@ -143,6 +143,7 @@ func glPipelineDrafts(body []byte, c Context) ([]draft, error) {
 			ID         int64  `json:"id"`
 			Name       string `json:"name"`
 			Ref        string `json:"ref"`
+			Tag        bool   `json:"tag"`
 			SHA        string `json:"sha"`
 			Status     string `json:"status"`
 			FinishedAt string `json:"finished_at"`
@@ -189,6 +190,10 @@ func glPipelineDrafts(body []byte, c Context) ([]draft, error) {
 	case p.MergeRequest != nil && p.MergeRequest.IID > 0:
 		d.number = p.MergeRequest.IID
 		d.base, d.branch = p.MergeRequest.TargetBranch, p.MergeRequest.SourceBranch
+	case a.Tag:
+		// The ref is a tag, which no merge request has as its source branch.
+		c.drop(DropNoPullRequest)
+		return nil, nil
 	default:
 		e, ok := c.index().ByBranch(prevents.GitLab, repo, a.Ref)
 		if !ok {

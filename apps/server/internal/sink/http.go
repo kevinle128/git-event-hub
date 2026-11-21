@@ -13,8 +13,13 @@ import (
 )
 
 // Client is the HTTP client of the HTTP-based sinks. Sinks pass the call
-// timeout through the context, so the client has none of its own.
-var Client = &http.Client{}
+// timeout through the context, so the client has none of its own. It does
+// not follow redirects: a redirect would turn the POST into a GET without the
+// body, and could send the auth header to another host. The 3xx answer is
+// returned as it is.
+var Client = &http.Client{
+	CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+}
 
 // HMACHex returns the hex HMAC-SHA256 of data.
 func HMACHex(secret, data []byte) string {

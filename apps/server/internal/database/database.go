@@ -20,9 +20,15 @@ import (
 )
 
 // OpenPostgres connects to url, runs the migrations and returns the handle.
+// The migrations run on a pool of their own: the migrate driver holds one
+// connection for its whole life and closes its pool when it is closed, so on
+// the application pool it would pin a connection forever.
 func OpenPostgres(url string, maxOpenConns int) (*gorm.DB, error) {
 	if url == "" {
 		return nil, errors.New("database: the database URL is empty")
+	}
+	if err := migratePostgres(url); err != nil {
+		return nil, err
 	}
 	db, err := gorm.Open(postgres.Open(url), &gorm.Config{Logger: logger.Discard})
 	if err != nil {
@@ -34,20 +40,31 @@ func OpenPostgres(url string, maxOpenConns int) (*gorm.DB, error) {
 	}
 	sqlDB.SetMaxOpenConns(maxOpenConns)
 	sqlDB.SetConnMaxIdleTime(5 * time.Minute)
-	drv, err := pgxmigrate.WithInstance(sqlDB, &pgxmigrate.Config{})
-	if err != nil {
-		_ = sqlDB.Close()
-		return nil, fmt.Errorf("database: migrate driver: %w", err)
-	}
-	if err := Migrate(drv, "pgx5", migrations.Postgres, "postgres"); err != nil {
-		_ = sqlDB.Close()
-		return nil, err
-	}
 	return db, nil
 }
 
+func migratePostgres(url string) error {
+	mdb, err := gorm.Open(postgres.Open(url), &gorm.Config{Logger: logger.Discard})
+	if err != nil {
+		return fmt.Errorf("database: %w", err)
+	}
+	sqlDB, err := mdb.DB()
+	if err != nil {
+		return err
+	}
+	drv, err := pgxmigrate.WithInstance(sqlDB, &pgxmigrate.Config{})
+	if err != nil {
+		_ = sqlDB.Close()
+		return fmt.Errorf("database: migrate driver: %w", err)
+	}
+	err = Migrate(drv, "pgx5", migrations.Postgres, "postgres")
+	// Close releases the driver's connection and closes sqlDB.
+	_ = drv.Close()
+	return err
+}
+
 // Migrate applies every migration in dir of fsys through drv. It does not
-// close drv, because drv shares the caller's connection pool.
+// close drv; the caller owns it.
 func Migrate(drv database.Driver, name string, fsys fs.FS, dir string) error {
 	src, err := iofs.New(fsys, dir)
 	if err != nil {

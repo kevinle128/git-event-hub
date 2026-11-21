@@ -97,6 +97,9 @@ func (d *Dispatcher) Step(ctx context.Context) (int, time.Duration) {
 	started := time.Now()
 	outcomes, derr := d.deliver(ctx, events)
 	took := time.Since(started)
+	// The backoff counts from the end of the attempt, so a slow failure does
+	// not make the next attempt due at once.
+	finished := d.now()
 	byID := make(map[string]sink.Outcome, len(outcomes))
 	for _, o := range outcomes {
 		byID[o.ID] = o
@@ -107,6 +110,11 @@ func (d *Dispatcher) Step(ctx context.Context) (int, time.Duration) {
 		switch {
 		case derr != nil:
 			o = sink.Outcome{State: sink.Retry, Err: derr.Error()}
+		case !ok && len(results) > 0:
+			// The sink stopped before this event, so it was not tried: it
+			// stays pending without spending an attempt, and waits behind
+			// the event before it.
+			continue
 		case !ok:
 			o = sink.Outcome{State: sink.Retry, Err: "sink gave no answer for the event"}
 		}
@@ -125,7 +133,7 @@ func (d *Dispatcher) Step(ctx context.Context) (int, time.Duration) {
 			d.metrics.Inc("hub_failed_total", "sink", d.key)
 			d.log.Error("gave up on an event after the last attempt", zap.String("event", it.Event.ID), zap.Int("attempts", attempt), zap.String("error", o.Err))
 		default:
-			r.State, r.Outcome, r.NextAt = store.StatePending, store.OutcomeRetry, now.Add(d.backoff(it.Attempts))
+			r.State, r.Outcome, r.NextAt = store.StatePending, store.OutcomeRetry, finished.Add(d.backoff(it.Attempts))
 			d.metrics.Inc("hub_retried_total", "sink", d.key)
 		}
 		results = append(results, r)
@@ -134,6 +142,7 @@ func (d *Dispatcher) Step(ctx context.Context) (int, time.Duration) {
 	// seen the events.
 	if err := d.store.Settle(context.WithoutCancel(ctx), d.key, results); err != nil {
 		d.log.Error("settle failed; the events will be sent again", zap.Error(err))
+		return 0, d.poll
 	}
 	if derr != nil {
 		d.log.Warn("delivery failed", zap.Error(derr), zap.Int("events", len(items)), zap.Int("attempt", items[0].Attempts+1))

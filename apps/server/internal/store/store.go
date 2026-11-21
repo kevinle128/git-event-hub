@@ -242,13 +242,21 @@ func remember(tx *gorm.DB, e prevents.Event, now int64) error {
 	keep := func(col string) clause.Expr {
 		return clause.Expr{SQL: fmt.Sprintf("COALESCE(NULLIF(excluded.%[1]s, ''), pr_index.%[1]s)", col)}
 	}
+	// A CI run may finish after a newer push, and its commit is then not the
+	// head any more: it only fills refs that are still unknown.
+	refs := keep
+	if e.Kind == prevents.KindCIFinished {
+		refs = func(col string) clause.Expr {
+			return clause.Expr{SQL: fmt.Sprintf("COALESCE(NULLIF(pr_index.%[1]s, ''), excluded.%[1]s)", col)}
+		}
+	}
 	return tx.Clauses(clause.OnConflict{
 		Columns: []clause.Column{{Name: "provider"}, {Name: "repo"}, {Name: "number"}},
 		DoUpdates: clause.Set{
 			{Column: clause.Column{Name: "author"}, Value: keep("author")},
-			{Column: clause.Column{Name: "branch"}, Value: keep("branch")},
-			{Column: clause.Column{Name: "base_ref"}, Value: keep("base_ref")},
-			{Column: clause.Column{Name: "head_sha"}, Value: keep("head_sha")},
+			{Column: clause.Column{Name: "branch"}, Value: refs("branch")},
+			{Column: clause.Column{Name: "base_ref"}, Value: refs("base_ref")},
+			{Column: clause.Column{Name: "head_sha"}, Value: refs("head_sha")},
 			{Column: clause.Column{Name: "state"}, Value: keep("state")},
 			{Column: clause.Column{Name: "updated_at"}, Value: clause.Expr{SQL: "excluded.updated_at"}},
 		},
@@ -428,59 +436,118 @@ func (s *Store) Prune(ctx context.Context, ret config.Retention, keys []string) 
 	day := 24 * time.Hour
 	evCut := now.Add(-time.Duration(ret.EventsDays) * day).UnixMilli()
 	db := s.db.WithContext(ctx)
-	steps := []*gorm.DB{
-		db.Where("state <> ? AND updated_at < ?", StatePending, evCut).Delete(&outboxRow{}),
-		db.Where("at < ?", evCut).Delete(&logRow{}),
-		db.Where("received_at < ?", now.Add(-time.Duration(ret.ReceiptsDays)*day).UnixMilli()).Delete(&receiptRow{}),
-		db.Where("updated_at < ?", now.Add(-time.Duration(ret.IndexDays)*day).UnixMilli()).Delete(&indexRow{}),
+	// Delete runs at once, so each step is a func: a failed step stops the rest.
+	steps := []func() *gorm.DB{
+		func() *gorm.DB { return db.Where("state <> ? AND updated_at < ?", StatePending, evCut).Delete(&outboxRow{}) },
+		func() *gorm.DB { return db.Where("at < ?", evCut).Delete(&logRow{}) },
+		func() *gorm.DB {
+			return db.Where("received_at < ?", now.Add(-time.Duration(ret.ReceiptsDays)*day).UnixMilli()).Delete(&receiptRow{})
+		},
+		func() *gorm.DB {
+			return db.Where("updated_at < ?", now.Add(-time.Duration(ret.IndexDays)*day).UnixMilli()).Delete(&indexRow{})
+		},
+		func() *gorm.DB {
+			// With no sink configured, every row belongs to a sink that is gone.
+			if len(keys) == 0 {
+				return db.Where("updated_at < ?", evCut).Delete(&outboxRow{})
+			}
+			return db.Where("updated_at < ? AND sink_key NOT IN ?", evCut, keys).Delete(&outboxRow{})
+		},
+		func() *gorm.DB {
+			return db.Where("created_at < ? AND seq NOT IN (?)", evCut, db.Model(&outboxRow{}).Select("seq")).Delete(&eventRow{})
+		},
 	}
-	if len(keys) > 0 {
-		steps = append(steps, db.Where("updated_at < ? AND sink_key NOT IN ?", evCut, keys).Delete(&outboxRow{}))
-	}
-	steps = append(steps, db.Where("created_at < ? AND seq NOT IN (?)", evCut, db.Model(&outboxRow{}).Select("seq")).Delete(&eventRow{}))
-	for _, st := range steps {
-		if st.Error != nil {
-			return st.Error
+	for _, step := range steps {
+		if err := step().Error; err != nil {
+			return err
 		}
 	}
 	return nil
 }
 
-// Get implements normalize.Index.
+// Get implements normalize.Index. A storage error counts as not found; the
+// webhook path uses Lookup, which reports it.
 func (s *Store) Get(p prevents.Provider, repo string, number int) (normalize.Entry, bool) {
+	return s.Lookup(context.Background()).Get(p, repo, number)
+}
+
+// ByBranch implements normalize.Index, as Lookup.ByBranch does.
+func (s *Store) ByBranch(p prevents.Provider, repo, branch string) (normalize.Entry, bool) {
+	return s.Lookup(context.Background()).ByBranch(p, repo, branch)
+}
+
+// BySHA implements normalize.Index, as Lookup.BySHA does.
+func (s *Store) BySHA(p prevents.Provider, repo, sha string) (normalize.Entry, bool) {
+	return s.Lookup(context.Background()).BySHA(p, repo, sha)
+}
+
+// Lookup is a normalize.Index for one webhook. It reads with the request
+// context and remembers the first storage error, so that the webhook can be
+// refused (and the forge retries) instead of its events being dropped as
+// having no pull request.
+type Lookup struct {
+	s   *Store
+	ctx context.Context
+	err error
+}
+
+// Lookup returns an index that reads with ctx.
+func (s *Store) Lookup(ctx context.Context) *Lookup { return &Lookup{s: s, ctx: ctx} }
+
+// Err returns the first storage error of the lookups, or nil.
+func (l *Lookup) Err() error { return l.err }
+
+func (l *Lookup) fail(err error) {
+	if l.err == nil {
+		l.err = err
+	}
+}
+
+func (l *Lookup) db() *gorm.DB { return l.s.db.WithContext(l.ctx) }
+
+// Get finds the pull request by number, in any state.
+func (l *Lookup) Get(p prevents.Provider, repo string, number int) (normalize.Entry, bool) {
 	var rows []indexRow
-	if err := s.db.Where("provider = ? AND repo = ? AND number = ?", string(p), repo, number).Limit(1).Find(&rows).Error; err != nil || len(rows) == 0 {
+	if err := l.db().Where("provider = ? AND repo = ? AND number = ?", string(p), repo, number).Limit(1).Find(&rows).Error; err != nil {
+		l.fail(err)
+		return normalize.Entry{}, false
+	}
+	if len(rows) == 0 {
 		return normalize.Entry{}, false
 	}
 	return entryOf(rows[0]), true
 }
 
-// ByBranch implements normalize.Index. It finds the open pull request that
-// has the branch as its source, and finds none when two match.
-func (s *Store) ByBranch(p prevents.Provider, repo, branch string) (normalize.Entry, bool) {
+// ByBranch finds the open pull request that has the branch as its source,
+// and finds none when two match.
+func (l *Lookup) ByBranch(p prevents.Provider, repo, branch string) (normalize.Entry, bool) {
 	if branch == "" {
 		return normalize.Entry{}, false
 	}
-	return s.lookupOpen(s.db.Where("provider = ? AND repo = ? AND branch = ?", string(p), repo, branch))
+	return l.open(l.db().Where("provider = ? AND repo = ? AND branch = ?", string(p), repo, branch))
 }
 
-// BySHA implements normalize.Index. It finds the open pull request that has
-// the commit as its head, and finds none when two match.
-func (s *Store) BySHA(p prevents.Provider, repo, sha string) (normalize.Entry, bool) {
+// BySHA finds the open pull request that has the commit as its head, and
+// finds none when two match.
+func (l *Lookup) BySHA(p prevents.Provider, repo, sha string) (normalize.Entry, bool) {
 	if sha == "" {
 		return normalize.Entry{}, false
 	}
-	return s.lookupOpen(s.db.Where("provider = ? AND repo = ? AND head_sha = ?", string(p), repo, sha))
+	return l.open(l.db().Where("provider = ? AND repo = ? AND head_sha = ?", string(p), repo, sha))
 }
 
-// lookupOpen finds the one open pull request that the query matches. A
-// branch or commit that more than one open pull request shares does not name
-// an owner; routing by a guess would hand one member's events to another.
-// A merged or closed pull request never matches. An empty state counts as
-// open, because such a pull request has shown no lifecycle event.
-func (s *Store) lookupOpen(q *gorm.DB) (normalize.Entry, bool) {
+// open finds the one open pull request that the query matches. A branch or
+// commit that more than one open pull request shares does not name an owner;
+// routing by a guess would hand one member's events to another. A merged or
+// closed pull request never matches. An empty state counts as open, because
+// such a pull request has shown no lifecycle event.
+func (l *Lookup) open(q *gorm.DB) (normalize.Entry, bool) {
 	var rows []indexRow
-	if err := q.Where("state NOT IN ?", []string{"merged", "closed"}).Limit(2).Find(&rows).Error; err != nil || len(rows) != 1 {
+	if err := q.Where("state NOT IN ?", []string{"merged", "closed"}).Limit(2).Find(&rows).Error; err != nil {
+		l.fail(err)
+		return normalize.Entry{}, false
+	}
+	if len(rows) != 1 {
 		return normalize.Entry{}, false
 	}
 	return entryOf(rows[0]), true
@@ -490,4 +557,7 @@ func entryOf(r indexRow) normalize.Entry {
 	return normalize.Entry{Number: r.Number, Author: r.Author, Branch: r.Branch, BaseRef: r.BaseRef, HeadSHA: r.HeadSHA}
 }
 
-var _ normalize.Index = (*Store)(nil)
+var (
+	_ normalize.Index = (*Store)(nil)
+	_ normalize.Index = (*Lookup)(nil)
+)

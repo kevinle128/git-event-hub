@@ -19,6 +19,8 @@ func TestMatch(t *testing.T) {
 		{"*", "anything", true},
 		{"*", "a/b", false},
 		{"**", "a/b", true},
+		{"nhóm/*", "nhóm/dự-án", true},
+		{"nhóm/*", "nhom/du-an", false},
 	}
 	for _, tt := range tests {
 		p, err := Compile(tt.pattern)

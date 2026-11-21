@@ -87,13 +87,17 @@ func (r *Registry) Write(out io.Writer, gauges []Gauge) error {
 	return w.Flush()
 }
 
+// labelEscaper escapes a label value as the text format 0.0.4 asks: only
+// backslash, double quote and newline.
+var labelEscaper = strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\n", `\n`)
+
 func labelString(labels []string) string {
 	if len(labels) < 2 {
 		return ""
 	}
 	parts := make([]string, 0, len(labels)/2)
 	for i := 0; i+1 < len(labels); i += 2 {
-		parts = append(parts, fmt.Sprintf("%s=%q", labels[i], labels[i+1]))
+		parts = append(parts, fmt.Sprintf(`%s="%s"`, labels[i], labelEscaper.Replace(labels[i+1])))
 	}
 	return "{" + strings.Join(parts, ",") + "}"
 }

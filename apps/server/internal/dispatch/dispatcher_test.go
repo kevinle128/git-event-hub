@@ -178,3 +178,68 @@ func TestRunStopsWithContext(t *testing.T) {
 		t.Fatal("Run did not stop")
 	}
 }
+
+// headFails answers only for the first event, as a single-mode webhook does
+// when its first request fails.
+type headFails struct {
+	sink.Tracker
+	received []string
+}
+
+func (h *headFails) Deliver(_ context.Context, b []prevents.Event) ([]sink.Outcome, error) {
+	for _, e := range b {
+		h.received = append(h.received, e.ID)
+	}
+	return []sink.Outcome{{ID: b[0].ID, State: sink.Retry, Err: "down"}}, nil
+}
+
+func TestUntriedEventsKeepTheirAttempts(t *testing.T) {
+	s := storetest.New(t).Store()
+	a := route.Target{Subscriber: "kevin", Sink: "omb"}
+	queue(t, s, []string{"poison", "e2", "e3"}, a)
+	c := &clock{t: time.Now()}
+	d := newDispatcher(a.Key(), s, &headFails{}, c, metrics.New())
+	for i := 0; i < 3; i++ {
+		n, _ := d.Step(ctx)
+		require.Equal(t, 3, n, "attempt %d", i+1)
+		c.advance(time.Minute)
+	}
+	events, err := s.ListEvents(ctx, store.EventQuery{})
+	require.NoError(t, err)
+	states := map[string]store.TargetState{}
+	for _, e := range events {
+		states[e.Event.ID] = e.Targets[0]
+	}
+	assert.Equal(t, store.StateFailed, states["poison"].State)
+	for _, id := range []string{"e2", "e3"} {
+		assert.Equal(t, store.StatePending, states[id].State, id)
+		assert.Equal(t, 0, states[id].Attempts, id)
+		log, err := s.ListDeliveries(ctx, store.DeliveryQuery{EventID: id})
+		require.NoError(t, err)
+		assert.Empty(t, log, id)
+	}
+}
+
+// slow fails after the clock has moved past the first backoff.
+type slow struct {
+	sink.Tracker
+	c *clock
+}
+
+func (s *slow) Deliver(context.Context, []prevents.Event) ([]sink.Outcome, error) {
+	s.c.advance(5 * time.Second)
+	return nil, errors.New("timeout")
+}
+
+func TestBackoffCountsFromTheEndOfTheAttempt(t *testing.T) {
+	s := storetest.New(t).Store()
+	a := route.Target{Subscriber: "kevin", Sink: "omb"}
+	queue(t, s, []string{"e1"}, a)
+	c := &clock{t: time.Now()}
+	d := newDispatcher(a.Key(), s, &slow{c: c}, c, metrics.New())
+	n, _ := d.Step(ctx)
+	require.Equal(t, 1, n)
+	n, wait := d.Step(ctx)
+	assert.Equal(t, 0, n, "the retry must wait for its backoff")
+	assert.InDelta(t, time.Second, wait, float64(time.Millisecond))
+}

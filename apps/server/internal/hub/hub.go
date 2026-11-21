@@ -207,6 +207,15 @@ type Result struct {
 // MaxBodyBytes returns the body limit in force.
 func (h *Hub) MaxBodyBytes() int64 { return h.rt.Load().cfg.Server.MaxBodyBytes }
 
+// KnowsSource reports whether name is a configured source, enabled or not.
+// The webhook handler checks it before it reads the body, so an unknown path
+// costs no body read and adds no metric label.
+func (h *Hub) KnowsSource(name string) bool {
+	rt := h.rt.Load()
+	_, ok := rt.sources[name]
+	return ok || rt.disabled[name]
+}
+
 // Receive handles one webhook delivery for the source with the given name.
 // The body must be the raw bytes; the signature covers them.
 func (h *Hub) Receive(ctx context.Context, name string, header http.Header, body []byte) Result {
@@ -248,10 +257,17 @@ func (h *Hub) Receive(ctx context.Context, name string, header http.Header, body
 	}
 
 	var drops []string
+	idx := h.store.Lookup(ctx)
 	events, err := src.Parse(req, normalize.Context{
-		DeliveryID: deliveryID, ReceivedAt: time.Now().UTC(), Index: h.store,
+		DeliveryID: deliveryID, ReceivedAt: time.Now().UTC(), Index: idx,
 		Drop: func(reason string) { drops = append(drops, reason) },
 	})
+	if lerr := idx.Err(); lerr != nil {
+		// A failed lookup is not a missing pull request: refuse, so that
+		// the forge retries, rather than store a receipt without events.
+		log.Error("store failed", zap.Error(lerr))
+		return Result{Status: http.StatusInternalServerError, Error: "storage error"}
+	}
 	if err != nil {
 		h.metrics.Inc("hub_refused_total", "source", name, "reason", "payload")
 		log.Warn("payload refused", zap.Error(err))

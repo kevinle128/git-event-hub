@@ -364,3 +364,71 @@ func TestCommentDoesNotChangeTheState(t *testing.T) {
 	accept(t, s, "d4", store.Queued{Event: ghEvent("github:d4:0", 7, prevents.KindCIFinished, "eeee5555")})
 	assert.Equal(t, "merged", storedState(t, db, prevents.GitHub, "kevinle128/demo", 7))
 }
+
+func TestLateCIRunDoesNotMoveTheHead(t *testing.T) {
+	s := storetest.New(t).Store()
+	accept(t, s, "d1", store.Queued{Event: ghEvent("github:d1:0", 7, prevents.KindOpened, "aaaa")})
+	accept(t, s, "d2", store.Queued{Event: ghEvent("github:d2:0", 7, prevents.KindPushed, "bbbb")})
+	// The run of the old commit finishes after the push.
+	accept(t, s, "d3", store.Queued{Event: ghEvent("github:d3:0", 7, prevents.KindCIFinished, "aaaa")})
+
+	got, ok := s.Get(prevents.GitHub, "kevinle128/demo", 7)
+	require.True(t, ok)
+	assert.Equal(t, "bbbb", got.HeadSHA)
+	_, ok = s.BySHA(prevents.GitHub, "kevinle128/demo", "bbbb")
+	assert.True(t, ok)
+}
+
+func TestCIRunFillsAnUnknownHead(t *testing.T) {
+	s := storetest.New(t).Store()
+	e := ghEvent("github:d1:0", 7, prevents.KindComment, "")
+	e.HeadSHA = nil
+	accept(t, s, "d1", store.Queued{Event: e})
+	accept(t, s, "d2", store.Queued{Event: ghEvent("github:d2:0", 7, prevents.KindCIFinished, "cccc")})
+
+	got, ok := s.Get(prevents.GitHub, "kevinle128/demo", 7)
+	require.True(t, ok)
+	assert.Equal(t, "cccc", got.HeadSHA)
+}
+
+func TestPruneWithoutSinksRemovesOldRowsOfGoneSinks(t *testing.T) {
+	s := storetest.New(t).Store()
+	start := time.Now()
+	s.SetClock(func() time.Time { return start })
+	accept(t, s, "d1", store.Queued{Event: sinktest.Event("stuck"), Targets: []route.Target{kevin("omb")}})
+
+	s.SetClock(func() time.Time { return start.Add(40 * 24 * time.Hour) })
+	require.NoError(t, s.Prune(ctx, config.Retention{ReceiptsDays: 14, EventsDays: 30, IndexDays: 60}, nil))
+
+	events, err := s.ListEvents(ctx, store.EventQuery{})
+	require.NoError(t, err)
+	assert.Empty(t, events, "a pending row of a sink that is no longer configured goes after EventsDays")
+}
+
+func TestLookupReportsStorageErrors(t *testing.T) {
+	s := storetest.New(t).Store()
+	l := s.Lookup(ctx)
+	_, ok := l.BySHA(prevents.GitHub, "kevinle128/demo", "aaaa")
+	assert.False(t, ok)
+	assert.NoError(t, l.Err(), "not found is not an error")
+
+	gone, cancel := context.WithCancel(ctx)
+	cancel()
+	l = s.Lookup(gone)
+	_, ok = l.Get(prevents.GitHub, "kevinle128/demo", 7)
+	assert.False(t, ok)
+	assert.Error(t, l.Err(), "a failed read must be reported, not taken as not found")
+}
+
+func TestTagPipelineIsNotTakenForABranch(t *testing.T) {
+	s := storetest.New(t).Store()
+	glDeliver(t, s, "d1", glMergeRequest(3, 11, "lan.nguyen", "open"))
+	// A tag that has the name of the merge request's source branch.
+	body := []byte(fmt.Sprintf(`{"object_kind":"pipeline","user":{"id":9,"username":"kevin.le"},
+		"project":{"web_url":"https://git.example.test/%[1]s","path_with_namespace":%[1]q},
+		"object_attributes":{"id":502,"ref":"develop","tag":true,"sha":"deadbeef","status":"failed"},
+		"merge_request":null,"builds":[]}`, glRepo))
+	events, drops := glDeliver(t, s, "d2", body)
+	assert.Empty(t, events)
+	assert.Equal(t, []string{normalize.DropNoPullRequest}, drops)
+}

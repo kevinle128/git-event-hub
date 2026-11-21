@@ -127,6 +127,9 @@ func (s *Server) requestLog(next echo.HandlerFunc) echo.HandlerFunc {
 
 // ReceiveHook implements POST /hooks/{source}.
 func (s *Server) ReceiveHook(c echo.Context, src string) error {
+	if !s.hub.KnowsSource(src) {
+		return c.JSON(http.StatusNotFound, api.HookResult{Error: ptr("unknown source")})
+	}
 	r := c.Request()
 	r.Body = http.MaxBytesReader(c.Response(), r.Body, s.hub.MaxBodyBytes())
 	body, err := io.ReadAll(r.Body)

@@ -54,6 +54,12 @@ func TestDefaults(t *testing.T) {
 	assert.True(t, c.Subscribers[0].On())
 }
 
+func TestAddrBracketsIPv6(t *testing.T) {
+	assert.Equal(t, "[::]:8080", Server{Host: "::", Port: 8080}.Addr())
+	assert.Equal(t, "[::1]:8080", Server{Host: "[::1]", Port: 8080}.Addr())
+	assert.Equal(t, "localhost:8080", Server{Host: "localhost", Port: 8080}.Addr())
+}
+
 func TestParseRejects(t *testing.T) {
 	tests := map[string]struct{ yaml, want string }{
 		"unknown top key":        {minimal + "extra: 1\n", "extra"},

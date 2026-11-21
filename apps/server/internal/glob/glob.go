@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 )
 
 // Pattern is a compiled glob.
@@ -22,15 +23,18 @@ func Compile(p string) (Pattern, error) {
 	}
 	var b strings.Builder
 	b.WriteString("(?is)^")
-	for i := 0; i < len(p); i++ {
+	for i := 0; i < len(p); {
 		switch {
 		case strings.HasPrefix(p[i:], "**"):
 			b.WriteString(".*")
-			i++
+			i += 2
 		case p[i] == '*':
 			b.WriteString("[^/]*")
+			i++
 		default:
-			b.WriteString(regexp.QuoteMeta(string(p[i])))
+			r, w := utf8.DecodeRuneInString(p[i:])
+			b.WriteString(regexp.QuoteMeta(string(r)))
+			i += w
 		}
 	}
 	b.WriteString("$")
