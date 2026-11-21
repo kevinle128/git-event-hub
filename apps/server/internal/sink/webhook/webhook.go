@@ -70,6 +70,9 @@ func New(spec sink.Spec) (sink.EventSink, error) {
 	}
 	switch out.auth {
 	case "", "none":
+		if s.Auth.SecretEnv != "" || s.Auth.Header != "" {
+			return nil, errors.New("auth.secretEnv and auth.header need auth.type hmac or bearer")
+		}
 		out.auth = "none"
 	case "hmac", "bearer":
 		if s.Auth.SecretEnv == "" || spec.Env(s.Auth.SecretEnv) == "" {

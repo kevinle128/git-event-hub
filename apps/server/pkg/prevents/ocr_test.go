@@ -88,6 +88,7 @@ func TestParseOCRMarkerCases(t *testing.T) {
 		{name: "success all fixed", body: block(t, map[string]any{"v": 2, "status": "success", "max": 3, "rounds": []any{round(2, 2)}}), wantStatus: ReviewSuccess},
 		{name: "success with unfixed findings needs a person", body: block(t, map[string]any{"v": 2, "status": "success", "max": 3, "rounds": []any{round(2, 1)}}), wantStatus: ReviewNeedsPerson},
 		{name: "failure", body: block(t, map[string]any{"v": 2, "status": "failure", "max": 3, "rounds": []any{round(0, 0)}}), wantStatus: ReviewFailed},
+		{name: "more fixed than real", body: block(t, map[string]any{"v": 2, "status": "success", "max": 3, "rounds": []any{round(1, 2)}}), wantErr: "rounds[0]"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

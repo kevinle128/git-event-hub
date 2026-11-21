@@ -9,8 +9,10 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -44,7 +46,7 @@ type Server struct {
 }
 
 // Addr is host:port.
-func (s Server) Addr() string { return fmt.Sprintf("%s:%d", s.Host, s.Port) }
+func (s Server) Addr() string { return net.JoinHostPort(s.Host, strconv.Itoa(s.Port)) }
 
 // Database names the environment variable that holds the Postgres URL.
 type Database struct {

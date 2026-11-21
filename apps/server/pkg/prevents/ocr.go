@@ -93,7 +93,7 @@ func (m OCRMarker) validate() error {
 		return errors.New("negative round limit")
 	}
 	for i, r := range m.Rounds {
-		if r.N < 1 || r.Real < 0 || r.Fixed < 0 {
+		if r.N < 1 || r.Real < 0 || r.Fixed < 0 || r.Fixed > r.Real {
 			return fmt.Errorf("rounds[%d] has a negative or zero count", i)
 		}
 		if r.Scope != ReviewScopeFull && r.Scope != ReviewScopeCommit {

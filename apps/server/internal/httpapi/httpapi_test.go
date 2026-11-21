@@ -133,6 +133,12 @@ func TestFanOutAndIsolationEndToEnd(t *testing.T) {
 	assert.Len(t, deliveries.Items, 1)
 	assert.NotNil(t, deliveries.NextBefore)
 	assert.Equal(t, http.StatusBadRequest, h.get("/api/deliveries?outcome=lost", apiToken, nil))
+	for _, p := range []string{
+		"/api/deliveries?limit=0", "/api/deliveries?limit=201", "/api/deliveries?before=0",
+		"/api/events?number=0", "/api/events?number=-1", "/api/events?before=-1", "/api/events?limit=0",
+	} {
+		assert.Equal(t, http.StatusBadRequest, h.get(p, apiToken, nil), p)
+	}
 }
 
 func TestReadEndpointsNeedTheToken(t *testing.T) {

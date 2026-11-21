@@ -86,6 +86,8 @@ func TestRoute(t *testing.T) {
 		{"kind out of scope", ev(prevents.GitHub, "kevinle128/OpenMausBot", "kevinle128", prevents.KindPushed, prevents.PushedData{}), nil, ReasonKind},
 		{"bot comment passes", ev(prevents.GitHub, "kevinle128/OpenMausBot", "kevinle128", prevents.KindComment, bot), []string{"kevin/omb"}, ""},
 		{"gitlab bot user passes", ev(prevents.GitLab, "vtc/3q/cms", "kevin.le", prevents.KindComment, prevents.CommentData{Commenter: "ocr-review-bot"}), []string{"kevin/omb"}, ""},
+		{"comment without an author is dropped", ev(prevents.GitHub, "kevinle128/OpenMausBot", "kevinle128", prevents.KindComment, prevents.CommentData{}), nil, ReasonCommentAuthor},
+		{"review without an author is dropped", ev(prevents.GitHub, "kevinle128/OpenMausBot", "kevinle128", prevents.KindReviewFinished, prevents.ReviewFinishedData{}), nil, ReasonCommentAuthor},
 		{"human comment is dropped", ev(prevents.GitHub, "kevinle128/OpenMausBot", "kevinle128", prevents.KindComment, prevents.CommentData{Commenter: "mallory"}), nil, ReasonCommentAuthor},
 		{"disabled subscriber gets nothing", ev(prevents.GitHub, "a/b", "gone-user", prevents.KindOpened, opened), nil, ReasonNoSubscriber},
 	}

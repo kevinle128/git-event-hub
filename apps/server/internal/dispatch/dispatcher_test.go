@@ -195,12 +195,14 @@ func TestSettleFailureWaitsBeforeTheNextTry(t *testing.T) {
 		require.NoError(t, db.Gorm().Exec(q).Error)
 	}
 	f := sinktest.NewFake()
-	d := NewDispatcher(a.Key(), s, f, policy(), metrics.New(), zap.NewNop())
+	m := metrics.New()
+	d := NewDispatcher(a.Key(), s, f, policy(), m, zap.NewNop())
 	runCtx, cancel := context.WithTimeout(ctx, 300*time.Millisecond)
 	defer cancel()
 	d.Run(runCtx)
 	assert.LessOrEqual(t, f.Calls(), 2, "a failed settle must not make the loop send the same event again at once")
 	assert.GreaterOrEqual(t, f.Calls(), 1)
+	assert.Zero(t, m.Value("hub_delivered_total", "sink", a.Key()), "a failed settle counts no delivery")
 }
 
 // answersFirst answers Retry for the first event of a batch and gives no
@@ -273,4 +275,54 @@ func TestSinkWithNoAnswerAtAllCountsEveryEventAsRetry(t *testing.T) {
 		assert.Equal(t, 1, ts.Attempts, id)
 		assert.Equal(t, store.StatePending, ts.State, id)
 	}
+}
+
+// answersLast answers Retry for the last event of a batch and gives no
+// outcome for the others.
+type answersLast struct{ sink.Tracker }
+
+func (*answersLast) Deliver(_ context.Context, batch []prevents.Event) ([]sink.Outcome, error) {
+	return []sink.Outcome{{ID: batch[len(batch)-1].ID, State: sink.Retry, Err: "refused"}}, nil
+}
+
+func TestUnansweredEventAheadOfAnAnsweredOneIsARetry(t *testing.T) {
+	s := storetest.New(t).Store()
+	a := route.Target{Subscriber: "kevin", Sink: "omb"}
+	queue(t, s, []string{"e1", "e2"}, a)
+	c := &clock{t: time.Now()}
+	d := newDispatcher(a.Key(), s, &answersLast{}, c, metrics.New())
+	n, _ := d.Step(ctx)
+	require.Equal(t, 2, n)
+	for id, ts := range targetStates(t, s) {
+		assert.Equal(t, 1, ts.Attempts, id)
+		assert.Equal(t, store.StatePending, ts.State, id)
+	}
+	n, wait := d.Step(ctx)
+	assert.Zero(t, n, "the head of the queue waits for its backoff")
+	assert.Positive(t, wait)
+}
+
+// slow moves the clock forward while it delivers, then fails.
+type slow struct {
+	sink.Tracker
+	c *clock
+}
+
+func (s *slow) Deliver(context.Context, []prevents.Event) ([]sink.Outcome, error) {
+	s.c.advance(time.Minute)
+	return nil, errors.New("timeout")
+}
+
+func TestBackoffStartsWhenTheDeliveryEnds(t *testing.T) {
+	s := storetest.New(t).Store()
+	a := route.Target{Subscriber: "kevin", Sink: "omb"}
+	queue(t, s, []string{"e1"}, a)
+	c := &clock{t: time.Now()}
+	d := newDispatcher(a.Key(), s, &slow{c: c}, c, metrics.New())
+	n, _ := d.Step(ctx)
+	require.Equal(t, 1, n)
+	items, wait, err := s.Claim(ctx, a.Key(), 10, c.now())
+	require.NoError(t, err)
+	assert.Empty(t, items, "a slow failed delivery must still wait for its backoff")
+	assert.Positive(t, wait)
 }

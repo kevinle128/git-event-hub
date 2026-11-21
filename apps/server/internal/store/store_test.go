@@ -190,6 +190,33 @@ func TestPruneKeepsPendingAndRemovesOld(t *testing.T) {
 	assert.True(t, ok, "the pull request memory lasts longer")
 }
 
+func TestPruneRemovesPendingRowsOfRemovedSinks(t *testing.T) {
+	for name, keys := range map[string][]string{"one sink left": {"kevin/omb"}, "no sink left": nil} {
+		t.Run(name, func(t *testing.T) {
+			s := storetest.New(t).Store()
+			start := time.Now()
+			s.SetClock(func() time.Time { return start })
+			accept(t, s, "d1", store.Queued{Event: sinktest.Event("kept"), Targets: []route.Target{kevin("omb")}})
+			accept(t, s, "d2", store.Queued{Event: sinktest.Event("gone"), Targets: []route.Target{{Subscriber: "removed", Sink: "sink"}}})
+
+			s.SetClock(func() time.Time { return start.Add(40 * 24 * time.Hour) })
+			require.NoError(t, s.Prune(ctx, config.Retention{ReceiptsDays: 14, EventsDays: 30, IndexDays: 60}, keys))
+
+			events, err := s.ListEvents(ctx, store.EventQuery{})
+			require.NoError(t, err)
+			ids := make([]string, 0, len(events))
+			for _, e := range events {
+				ids = append(ids, e.Event.ID)
+			}
+			if keys == nil {
+				assert.Empty(t, ids, "with no sink configured, every old pending row is pruned")
+			} else {
+				assert.Equal(t, []string{"kept"}, ids)
+			}
+		})
+	}
+}
+
 func TestListEventsIsolatesSubscribers(t *testing.T) {
 	s := storetest.New(t).Store()
 	accept(t, s, "d1", store.Queued{Event: sinktest.Event("both"), Targets: []route.Target{kevin("omb"), {Subscriber: "lan", Sink: "hermes"}}})
@@ -212,4 +239,18 @@ func TestListEventsIsolatesSubscribers(t *testing.T) {
 	require.Len(t, next, 1)
 	assert.Equal(t, "both", next[0].Event.ID)
 	assert.Len(t, next[0].Targets, 2)
+}
+
+func TestClaimLogsTheEventIDOfAnUnreadablePayload(t *testing.T) {
+	db := storetest.New(t)
+	s := db.Store()
+	accept(t, s, "d1", store.Queued{Event: sinktest.Event("broken"), Targets: []route.Target{kevin("omb")}})
+	require.NoError(t, db.Gorm().Exec(`UPDATE events SET payload = 'not json' WHERE id = ?`, "broken").Error)
+	items, _, err := s.Claim(ctx, "kevin/omb", 10, time.Now())
+	require.NoError(t, err)
+	assert.Empty(t, items)
+	log, err := s.ListDeliveries(ctx, store.DeliveryQuery{EventID: "broken"})
+	require.NoError(t, err)
+	require.Len(t, log, 1)
+	assert.Equal(t, store.OutcomeRejected, log[0].Outcome)
 }

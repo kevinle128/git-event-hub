@@ -102,23 +102,28 @@ func (d *Dispatcher) Step(ctx context.Context) (int, time.Duration) {
 		byID[o.ID] = o
 	}
 	// When the sink answered for some events of the batch, an event without
-	// an answer was not sent: it stays pending with no attempt counted and no
-	// log row. When the sink answered for none, every event counts as a
-	// retry, so a sink that never answers cannot keep the loop busy.
-	answered := 0
-	for _, it := range items {
+	// an answer after the last answered one was not sent: it stays pending
+	// with no attempt counted and no log row. An event without an answer
+	// ahead of an answered one counts as a retry, so the head of the queue
+	// waits for its backoff. When the sink answered for none, every event
+	// counts as a retry, so a sink that never answers cannot keep the loop
+	// busy.
+	lastAnswered := -1
+	for i, it := range items {
 		if _, ok := byID[it.Event.ID]; ok {
-			answered++
+			lastAnswered = i
 		}
 	}
-	untried := derr == nil && answered > 0
+	// The backoff starts when the delivery ended, not when it started.
+	retryAt := d.now()
 	results := make([]store.Settlement, 0, len(items))
-	for _, it := range items {
+	counts := make([]string, 0, len(items))
+	for i, it := range items {
 		o, ok := byID[it.Event.ID]
 		switch {
 		case derr != nil:
 			o = sink.Outcome{State: sink.Retry, Err: derr.Error()}
-		case !ok && untried:
+		case !ok && lastAnswered >= 0 && i > lastAnswered:
 			continue
 		case !ok:
 			o = sink.Outcome{State: sink.Retry, Err: "sink gave no answer for the event"}
@@ -128,18 +133,18 @@ func (d *Dispatcher) Step(ctx context.Context) (int, time.Duration) {
 		switch {
 		case o.State == sink.Acked:
 			r.State, r.Outcome, r.Err = store.StateDone, store.OutcomeAcked, ""
-			d.metrics.Inc("hub_delivered_total", "sink", d.key)
+			counts = append(counts, "hub_delivered_total")
 		case o.State == sink.Rejected:
 			r.State, r.Outcome = store.StateRejected, store.OutcomeRejected
-			d.metrics.Inc("hub_rejected_total", "sink", d.key)
+			counts = append(counts, "hub_rejected_total")
 			d.log.Warn("sink rejected an event", zap.String("event", it.Event.ID), zap.String("reason", o.Err))
 		case attempt >= d.cfg.MaxAttempts:
 			r.State, r.Outcome = store.StateFailed, store.OutcomeFailed
-			d.metrics.Inc("hub_failed_total", "sink", d.key)
+			counts = append(counts, "hub_failed_total")
 			d.log.Error("gave up on an event after the last attempt", zap.String("event", it.Event.ID), zap.Int("attempts", attempt), zap.String("error", o.Err))
 		default:
-			r.State, r.Outcome, r.NextAt = store.StatePending, store.OutcomeRetry, now.Add(d.backoff(it.Attempts))
-			d.metrics.Inc("hub_retried_total", "sink", d.key)
+			r.State, r.Outcome, r.NextAt = store.StatePending, store.OutcomeRetry, retryAt.Add(d.backoff(it.Attempts))
+			counts = append(counts, "hub_retried_total")
 		}
 		results = append(results, r)
 	}
@@ -152,6 +157,10 @@ func (d *Dispatcher) Step(ctx context.Context) (int, time.Duration) {
 		// Without a pause the loop would send the same events again at once.
 		d.log.Error("settle failed; the events will be sent again after a pause", zap.Error(err))
 		return 0, d.poll
+	}
+	// Count only what the settle stored, so a failed settle counts nothing.
+	for _, name := range counts {
+		d.metrics.Inc(name, "sink", d.key)
 	}
 	return len(items), 0
 }

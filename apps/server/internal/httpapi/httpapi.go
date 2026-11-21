@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -208,6 +209,12 @@ func (s *Server) ListEvents(c echo.Context, p api.ListEventsParams) error {
 		Subscriber: val(p.Subscriber), Repo: val(p.Repo), Kind: val(p.Kind),
 		Number: val(p.Number), Before: val(p.Before), Limit: val(p.Limit),
 	}
+	if p.Number != nil && *p.Number < 1 {
+		return c.JSON(http.StatusBadRequest, api.Error{Error: "number must be at least 1"})
+	}
+	if msg := pageError(p.Before, p.Limit); msg != "" {
+		return c.JSON(http.StatusBadRequest, api.Error{Error: msg})
+	}
 	if p.Provider != nil {
 		if !p.Provider.Valid() {
 			return c.JSON(http.StatusBadRequest, api.Error{Error: "provider must be github or gitlab"})
@@ -246,6 +253,9 @@ func (s *Server) ListDeliveries(c echo.Context, p api.ListDeliveriesParams) erro
 		Subscriber: val(p.Subscriber), Sink: val(p.Sink), EventID: val(p.EventId),
 		Before: val(p.Before), Limit: val(p.Limit),
 	}
+	if msg := pageError(p.Before, p.Limit); msg != "" {
+		return c.JSON(http.StatusBadRequest, api.Error{Error: msg})
+	}
 	if p.Outcome != nil {
 		if !p.Outcome.Valid() {
 			return c.JSON(http.StatusBadRequest, api.Error{Error: "outcome must be acked, retry, rejected, failed or expired"})
@@ -282,4 +292,16 @@ func val[T any](p *T) T {
 		return zero
 	}
 	return *p
+}
+
+// pageError checks the paging parameters against the bounds of the API
+// contract. Without it, a zero or negative value would drop the filter.
+func pageError(before *int64, limit *int) string {
+	if before != nil && *before < 1 {
+		return "before must be at least 1"
+	}
+	if limit != nil && (*limit < 1 || *limit > store.MaxPage) {
+		return fmt.Sprintf("limit must be between 1 and %d", store.MaxPage)
+	}
+	return ""
 }

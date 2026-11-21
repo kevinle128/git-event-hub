@@ -94,6 +94,9 @@ func TestGitLabMergeRequestFields(t *testing.T) {
 	if str(merged[0].Data.(prevents.MergedData).MergedBy) != "kevin.le" {
 		t.Errorf("merged = %+v", merged[0].Data)
 	}
+	if str(merged[0].Data.(prevents.MergedData).MergeCommitSHA) != "0b6d1c5e4a7f3e2d9c8b7a6f5e4d3c2b1a0f9e8d" {
+		t.Errorf("mergeCommitSha = %v", merged[0].Data.(prevents.MergedData).MergeCommitSHA)
+	}
 }
 
 func TestGitLabPipeline(t *testing.T) {
@@ -137,6 +140,13 @@ func TestGitLabPipeline(t *testing.T) {
 		events, _ := glRun(t, knownMR(), "pipeline.branch-failed.json")
 		if len(events) != 1 || events[0].Number != 12 || str(events[0].BaseRef) != "dev" {
 			t.Fatalf("events = %+v", events)
+		}
+	})
+	t.Run("tag pipeline is not matched to a branch", func(t *testing.T) {
+		body := strings.Replace(string(testutil.Fixture(t, "gitlab/pipeline.branch-failed.json")), `"tag": false`, `"tag": true`, 1)
+		events, drops := run(t, knownMR(), func(c Context) ([]prevents.Event, error) { return GitLab([]byte(body), c) })
+		if len(events) != 0 || len(drops) != 1 || drops[0] != DropNoPullRequest {
+			t.Fatalf("events = %d drops = %v", len(events), drops)
 		}
 	})
 	t.Run("branch pipeline without a known merge request is dropped", func(t *testing.T) {

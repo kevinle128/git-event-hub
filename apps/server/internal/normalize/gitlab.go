@@ -78,6 +78,7 @@ func glMergeRequestDrafts(body []byte, c Context) ([]draft, error) {
 			WorkInProgress      bool   `json:"work_in_progress"`
 			MergeStatus         string `json:"merge_status"`
 			DetailedMergeStatus string `json:"detailed_merge_status"`
+			MergeCommitSHA      string `json:"merge_commit_sha"`
 			LastCommit          struct {
 				ID string `json:"id"`
 			} `json:"last_commit"`
@@ -115,7 +116,7 @@ func glMergeRequestDrafts(body []byte, c Context) ([]draft, error) {
 	case "merge":
 		d := base
 		d.kind = prevents.KindMerged
-		d.data = prevents.MergedData{MergedBy: nonEmpty(p.User.Username), URL: a.URL}
+		d.data = prevents.MergedData{MergeCommitSHA: nonEmpty(a.MergeCommitSHA), MergedBy: nonEmpty(p.User.Username), URL: a.URL}
 		return []draft{d}, nil
 	case "close":
 		d := base
@@ -143,6 +144,7 @@ func glPipelineDrafts(body []byte, c Context) ([]draft, error) {
 			ID         int64  `json:"id"`
 			Name       string `json:"name"`
 			Ref        string `json:"ref"`
+			Tag        bool   `json:"tag"`
 			SHA        string `json:"sha"`
 			Status     string `json:"status"`
 			FinishedAt string `json:"finished_at"`
@@ -189,6 +191,11 @@ func glPipelineDrafts(body []byte, c Context) ([]draft, error) {
 	case p.MergeRequest != nil && p.MergeRequest.IID > 0:
 		d.number = p.MergeRequest.IID
 		d.base, d.branch = p.MergeRequest.TargetBranch, p.MergeRequest.SourceBranch
+	case a.Tag:
+		// A tag pipeline belongs to no merge request, even when the tag has
+		// the name of a source branch.
+		c.drop(DropNoPullRequest)
+		return nil, nil
 	default:
 		e, ok := c.index().ByBranch(prevents.GitLab, repo, a.Ref)
 		if !ok {

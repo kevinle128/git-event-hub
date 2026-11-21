@@ -22,15 +22,16 @@ func Compile(p string) (Pattern, error) {
 	}
 	var b strings.Builder
 	b.WriteString("(?is)^")
-	for i := 0; i < len(p); i++ {
+	rs := []rune(p)
+	for i := 0; i < len(rs); i++ {
 		switch {
-		case strings.HasPrefix(p[i:], "**"):
+		case rs[i] == '*' && i+1 < len(rs) && rs[i+1] == '*':
 			b.WriteString(".*")
 			i++
-		case p[i] == '*':
+		case rs[i] == '*':
 			b.WriteString("[^/]*")
 		default:
-			b.WriteString(regexp.QuoteMeta(string(p[i])))
+			b.WriteString(regexp.QuoteMeta(string(rs[i])))
 		}
 	}
 	b.WriteString("$")

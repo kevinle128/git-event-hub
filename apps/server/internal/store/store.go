@@ -260,11 +260,12 @@ func (s *Store) Claim(ctx context.Context, key string, limit int, now time.Time)
 		Seq      int64
 		Attempts int
 		NextAt   int64
+		ID       string
 		Payload  string
 	}
 	var rows []joined
 	err := s.db.WithContext(ctx).Table("outbox AS q").
-		Select("q.seq, q.attempts, q.next_at, e.payload").
+		Select("q.seq, q.attempts, q.next_at, e.id, e.payload").
 		Joins("JOIN events e ON e.seq = q.seq").
 		Where("q.sink_key = ? AND q.state = ?", key, StatePending).
 		Order("q.seq").Limit(limit).Scan(&rows).Error
@@ -281,7 +282,7 @@ func (s *Store) Claim(ctx context.Context, key string, limit int, now time.Time)
 	for _, r := range rows {
 		var e prevents.Event
 		if err := json.Unmarshal([]byte(r.Payload), &e); err != nil {
-			bad = append(bad, Settlement{Seq: r.Seq, State: StateRejected, Outcome: OutcomeRejected, Attempt: r.Attempts + 1, Err: "stored event is unreadable: " + err.Error()})
+			bad = append(bad, Settlement{Seq: r.Seq, EventID: r.ID, State: StateRejected, Outcome: OutcomeRejected, Attempt: r.Attempts + 1, Err: "stored event is unreadable: " + err.Error()})
 			continue
 		}
 		items = append(items, Item{Seq: r.Seq, Event: e, Attempts: r.Attempts})
@@ -417,6 +418,9 @@ func (s *Store) Prune(ctx context.Context, ret config.Retention, keys []string) 
 	}
 	if len(keys) > 0 {
 		steps = append(steps, db.Where("updated_at < ? AND sink_key NOT IN ?", evCut, keys).Delete(&outboxRow{}))
+	} else {
+		// No sink is configured, so every old row belongs to a removed sink.
+		steps = append(steps, db.Where("updated_at < ?", evCut).Delete(&outboxRow{}))
 	}
 	steps = append(steps, db.Where("created_at < ? AND seq NOT IN (?)", evCut, db.Model(&outboxRow{}).Select("seq")).Delete(&eventRow{}))
 	for _, st := range steps {
