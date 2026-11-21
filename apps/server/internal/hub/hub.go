@@ -207,19 +207,32 @@ type Result struct {
 // MaxBodyBytes returns the body limit in force.
 func (h *Hub) MaxBodyBytes() int64 { return h.rt.Load().cfg.Server.MaxBodyBytes }
 
+// CheckSource answers for a source that is not active, before the body is
+// read. ok is true when the source with the given name is active.
+func (h *Hub) CheckSource(name string) (res Result, ok bool) {
+	return h.checkSource(h.rt.Load(), name)
+}
+
+func (h *Hub) checkSource(rt *runtime, name string) (Result, bool) {
+	if _, ok := rt.sources[name]; ok {
+		return Result{}, true
+	}
+	if rt.disabled[name] {
+		// 202, so that the forge does not mark the webhook as failing.
+		h.metrics.Inc("hub_dropped_total", "source", name, "reason", "source_disabled")
+		return Result{Status: http.StatusAccepted, Ignored: "source is disabled"}, false
+	}
+	return Result{Status: http.StatusNotFound, Error: "unknown source"}, false
+}
+
 // Receive handles one webhook delivery for the source with the given name.
 // The body must be the raw bytes; the signature covers them.
 func (h *Hub) Receive(ctx context.Context, name string, header http.Header, body []byte) Result {
 	rt := h.rt.Load()
-	src, ok := rt.sources[name]
-	if !ok {
-		if rt.disabled[name] {
-			// 202, so that the forge does not mark the webhook as failing.
-			h.metrics.Inc("hub_dropped_total", "source", name, "reason", "source_disabled")
-			return Result{Status: http.StatusAccepted, Ignored: "source is disabled"}
-		}
-		return Result{Status: http.StatusNotFound, Error: "unknown source"}
+	if res, ok := h.checkSource(rt, name); !ok {
+		return res
 	}
+	src := rt.sources[name]
 	req := &source.Request{Method: http.MethodPost, Header: header, Body: body}
 	if err := src.Verify(req); err != nil {
 		reason := "signature"
@@ -248,10 +261,17 @@ func (h *Hub) Receive(ctx context.Context, name string, header http.Header, body
 	}
 
 	var drops []string
+	idx := h.store.Index(ctx)
 	events, err := src.Parse(req, normalize.Context{
-		DeliveryID: deliveryID, ReceivedAt: time.Now().UTC(), Index: h.store,
+		DeliveryID: deliveryID, ReceivedAt: time.Now().UTC(), Index: idx,
 		Drop: func(reason string) { drops = append(drops, reason) },
 	})
+	if ierr := idx.Err(); ierr != nil {
+		// Without the memory the events may lose their owner; the forge
+		// must send the delivery again rather than have it dropped.
+		log.Error("store failed", zap.Error(ierr))
+		return Result{Status: http.StatusInternalServerError, Error: "storage error"}
+	}
 	if err != nil {
 		h.metrics.Inc("hub_refused_total", "source", name, "reason", "payload")
 		log.Warn("payload refused", zap.Error(err))
@@ -260,19 +280,14 @@ func (h *Hub) Receive(ctx context.Context, name string, header http.Header, body
 	if len(events) == 0 && len(drops) == 0 {
 		drops = append(drops, "no_events")
 	}
-	for _, reason := range drops {
-		h.metrics.Inc("hub_dropped_total", "source", name, "reason", reason)
-	}
 
 	acc := store.Acceptance{Source: name, DeliveryID: deliveryID, EventType: eventType(header), Remember: events}
 	var wake []string
-	dropped := len(drops)
 	for _, e := range events {
 		targets, reason := rt.router.Route(e)
 		if reason != "" {
-			h.metrics.Inc("hub_dropped_total", "source", name, "reason", reason)
 			log.Debug("event dropped", zap.String("event", e.ID), zap.String("kind", string(e.Kind)), zap.String("reason", reason))
-			dropped++
+			drops = append(drops, reason)
 			continue
 		}
 		acc.Queue = append(acc.Queue, store.Queued{Event: e, Targets: targets})
@@ -280,6 +295,7 @@ func (h *Hub) Receive(ctx context.Context, name string, header http.Header, body
 			wake = append(wake, t.Key())
 		}
 	}
+	dropped := len(drops)
 	acc.Dropped = dropped
 	duplicate, err := h.store.Accept(ctx, acc)
 	if err != nil {
@@ -289,6 +305,11 @@ func (h *Hub) Receive(ctx context.Context, name string, header http.Header, body
 	if duplicate {
 		h.metrics.Inc("hub_deduped_total", "source", name)
 		return Result{Status: http.StatusOK, Duplicate: true}
+	}
+	// Count only once the delivery is stored: a failed or duplicate one
+	// comes again and must not be counted twice.
+	for _, reason := range drops {
+		h.metrics.Inc("hub_dropped_total", "source", name, "reason", reason)
 	}
 	for _, q := range acc.Queue {
 		for _, t := range q.Targets {

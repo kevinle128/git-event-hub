@@ -102,13 +102,22 @@ func (d *Dispatcher) Step(ctx context.Context) (int, time.Duration) {
 		byID[o.ID] = o
 	}
 	results := make([]store.Settlement, 0, len(items))
+	// halted is set once an event of the batch did not finish. A sink that
+	// stops there (webhook single mode) leaves the later events untried, so
+	// they keep their attempts and wait behind it.
+	halted := false
 	for _, it := range items {
 		o, ok := byID[it.Event.ID]
 		switch {
 		case derr != nil:
 			o = sink.Outcome{State: sink.Retry, Err: derr.Error()}
+		case !ok && halted:
+			continue
 		case !ok:
 			o = sink.Outcome{State: sink.Retry, Err: "sink gave no answer for the event"}
+		}
+		if o.State == sink.Retry {
+			halted = true
 		}
 		attempt := it.Attempts + 1
 		r := store.Settlement{Seq: it.Seq, EventID: it.Event.ID, Attempt: attempt, Err: o.Err, Duration: took}
@@ -169,6 +178,9 @@ type Status struct {
 	Pending   int
 	OldestSec float64
 	LastError string
+	// StatsErr is set when the queue could not be read; Pending, OldestSec
+	// and LastError are then unknown.
+	StatsErr  error
 }
 
 // Status reads the sink health and the queue.
@@ -177,8 +189,14 @@ func (d *Dispatcher) Status(ctx context.Context) Status {
 	if err := d.sink.Health(ctx); err != nil {
 		st.Healthy, st.Error = false, err.Error()
 	}
-	if q, err := d.store.Stats(ctx, d.key); err == nil {
-		st.Pending, st.OldestSec, st.LastError = q.Pending, q.OldestAge.Seconds(), q.LastError
+	q, err := d.store.Stats(ctx, d.key)
+	if err != nil {
+		if ctx.Err() == nil {
+			d.log.Error("queue stats failed", zap.Error(err))
+		}
+		st.StatsErr = err
+		return st
 	}
+	st.Pending, st.OldestSec, st.LastError = q.Pending, q.OldestAge.Seconds(), q.LastError
 	return st
 }

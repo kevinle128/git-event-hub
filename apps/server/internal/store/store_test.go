@@ -100,6 +100,15 @@ func TestPullRequestMemoryKeepsKnownValues(t *testing.T) {
 	assert.Equal(t, e.Number, bySHA.Number)
 	_, ok = s.BySHA(prevents.GitHub, e.Repo, "aaaa")
 	assert.False(t, ok)
+
+	// A CI run of the old commit that finishes late must not move the head back.
+	ci := sinktest.Event("github:d3:0")
+	ci.Kind, ci.HeadSHA = prevents.KindCIFinished, &head
+	ci.Data = prevents.CIFinishedData{Source: "github-actions", Scope: prevents.ScopeWorkflow, Status: prevents.CICancelled, FailedJobs: []prevents.FailedJob{}}
+	accept(t, s, "d3", store.Queued{Event: ci})
+	got, ok = s.Get(prevents.GitHub, e.Repo, e.Number)
+	require.True(t, ok)
+	assert.Equal(t, "bbbb", got.HeadSHA)
 }
 
 func TestClaimKeepsOrderAndWaitsForBackoff(t *testing.T) {

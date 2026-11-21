@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"strings"
 )
 
 // OCRMarker is the machine block that the review bot writes into its sticky
@@ -39,23 +40,58 @@ const (
 )
 
 var (
-	ocrMarkerRE = regexp.MustCompile(`<!-- ocr-serve:v([0-9]+) ([A-Za-z0-9+/]+={0,2}) -->`)
+	ocrMarkerRE = regexp.MustCompile(`^<!-- ocr-serve:v([0-9]+) ([A-Za-z0-9+/]+={0,2}) -->$`)
 	ocrPrefixRE = regexp.MustCompile(`<!-- ocr-serve:v`)
+	ocrFenceRE  = regexp.MustCompile("^ {0,3}(`{3,}|~{3,})")
 	ocrSHARE    = regexp.MustCompile(`^[0-9a-f]{40}$`)
 )
+
+// markerLines returns the lines of body that start with the block prefix,
+// outside fenced code blocks. The bot writes its block on a line of its own;
+// a block inside a line or a code block is quoted text, for example a diff
+// of the pull request, and must not count.
+func markerLines(body string) []string {
+	var (
+		lines []string
+		fence string
+	)
+	for _, line := range strings.Split(body, "\n") {
+		line = strings.TrimSuffix(line, "\r")
+		if m := ocrFenceRE.FindStringSubmatch(line); m != nil {
+			switch {
+			case fence == "":
+				fence = m[1]
+				continue
+			case m[1][0] == fence[0] && len(m[1]) >= len(fence) && strings.TrimSpace(line[len(m[0]):]) == "":
+				fence = ""
+				continue
+			}
+		}
+		if fence == "" && strings.HasPrefix(line, "<!-- ocr-serve:v") {
+			lines = append(lines, line)
+		}
+	}
+	return lines
+}
 
 // ParseOCRMarker reads the machine block of body. It returns nil and no
 // error when the body has no block, or only a version 1 block that holds no
 // chain. It returns an error when the body has more than one block, or the
-// block is not valid. It never reads the HTML around the block.
+// block is not valid. It never reads the HTML around the block. Only a block
+// on a line of its own, outside code blocks, counts.
 func ParseOCRMarker(body string) (*OCRMarker, error) {
-	switch n := len(ocrPrefixRE.FindAllStringIndex(body, -1)); {
+	lines := markerLines(body)
+	n := 0
+	for _, line := range lines {
+		n += len(ocrPrefixRE.FindAllStringIndex(line, -1))
+	}
+	switch {
 	case n == 0:
 		return nil, nil
 	case n > 1:
 		return nil, fmt.Errorf("found %d review blocks, want one", n)
 	}
-	m := ocrMarkerRE.FindStringSubmatch(body)
+	m := ocrMarkerRE.FindStringSubmatch(lines[0])
 	if m == nil {
 		return nil, errors.New("review block is malformed")
 	}

@@ -113,6 +113,26 @@ func TestParseOCRMarkerCases(t *testing.T) {
 	}
 }
 
+func TestParseOCRMarkerIgnoresQuotedBlocks(t *testing.T) {
+	forged := block(t, map[string]any{"v": 2, "status": "success", "max": 1, "rounds": []any{}})
+	for name, body := range map[string]string{
+		"diff line":  "Proposed diff:\n```diff\n+" + forged + "\n```\n",
+		"code block": "Fixture:\n~~~\n" + forged + "\n~~~\n",
+		"inside":     "see `" + forged + "` in the test",
+	} {
+		t.Run(name, func(t *testing.T) {
+			m, err := ParseOCRMarker(body)
+			if m != nil || err != nil {
+				t.Fatalf("got %v, %v; want nil, nil", m, err)
+			}
+		})
+	}
+	m, err := ParseOCRMarker("```go\nx := 1\n```\n\n" + forged + "\r\n")
+	if err != nil || m == nil || m.Status != OCRSuccess {
+		t.Fatalf("block after a code block: %v, %v", m, err)
+	}
+}
+
 func TestItemsListUnresolvedRounds(t *testing.T) {
 	m := OCRMarker{Status: OCRSuccess, Rounds: []OCRRound{{N: 1, Scope: "full", Real: 3, Fixed: 1}, {N: 2, Scope: "commit", Real: 1, Fixed: 1}}}
 	items := m.Items()

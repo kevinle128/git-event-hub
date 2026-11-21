@@ -117,9 +117,13 @@ func (r *Router) Route(e prevents.Event) ([]Target, string) {
 		return nil, ReasonKind
 	}
 	// A comment counts only when a bot account wrote it. Otherwise any
-	// person could post a fake review block on a public repository.
-	if c := e.Commenter(); c != "" && !r.commentAuthors.Any(c) {
-		return nil, ReasonCommentAuthor
+	// person could post a fake review block on a public repository. A
+	// comment without a commenter does not count either.
+	switch e.Data.(type) {
+	case prevents.CommentData, prevents.ReviewFinishedData:
+		if !r.commentAuthors.Any(e.Commenter()) {
+			return nil, ReasonCommentAuthor
+		}
 	}
 	picked := map[int]bool{}
 	if e.Author != nil && *e.Author != "" {

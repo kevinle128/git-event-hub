@@ -15,6 +15,9 @@ type Store struct {
 	path  string
 	check func(*Config) error
 	cur   atomic.Pointer[Config]
+	// stamp is the file state that the configuration in force was read
+	// from. Only NewStore and Watch use it.
+	stamp fileStamp
 	log   *zap.Logger
 	// OnReloadError is called for each failed reload. It may be nil.
 	OnReloadError func(error)
@@ -24,7 +27,7 @@ type Store struct {
 // may reject a configuration, for example when an adapter does not accept its
 // settings or a secret is missing. check may be nil.
 func NewStore(path string, check func(*Config) error, log *zap.Logger) (*Store, error) {
-	s := &Store{path: path, check: check, log: log}
+	s := &Store{path: path, check: check, log: log, stamp: stat(path)}
 	c, err := s.read()
 	if err != nil {
 		return nil, err
@@ -73,7 +76,7 @@ func (s *Store) Reload() (*Config, error) {
 // so it also sees a file that an editor or a bind mount replaces. (Mount the
 // config directory, not the file: a file bind mount keeps the old inode.)
 func (s *Store) Watch(ctx context.Context, interval time.Duration, onChange func(*Config)) {
-	last := stat(s.path)
+	last := s.stamp
 	t := time.NewTicker(interval)
 	defer t.Stop()
 	for {
@@ -87,6 +90,7 @@ func (s *Store) Watch(ctx context.Context, interval time.Duration, onChange func
 			continue
 		}
 		last = now
+		s.stamp = now
 		if c, err := s.Reload(); err == nil {
 			onChange(c)
 		}

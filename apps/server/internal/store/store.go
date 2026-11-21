@@ -224,13 +224,21 @@ func remember(tx *gorm.DB, e prevents.Event, now int64) error {
 	keep := func(col string) clause.Expr {
 		return clause.Expr{SQL: fmt.Sprintf("COALESCE(NULLIF(excluded.%[1]s, ''), pr_index.%[1]s)", col)}
 	}
+	// A CI run may finish, or be cancelled, after a newer push: its commit is
+	// then stale, so it only fills refs that the memory does not have yet.
+	refs := keep
+	if e.Kind == prevents.KindCIFinished {
+		refs = func(col string) clause.Expr {
+			return clause.Expr{SQL: fmt.Sprintf("COALESCE(NULLIF(pr_index.%[1]s, ''), excluded.%[1]s)", col)}
+		}
+	}
 	return tx.Clauses(clause.OnConflict{
 		Columns: []clause.Column{{Name: "provider"}, {Name: "repo"}, {Name: "number"}},
 		DoUpdates: clause.Set{
 			{Column: clause.Column{Name: "author"}, Value: keep("author")},
-			{Column: clause.Column{Name: "branch"}, Value: keep("branch")},
-			{Column: clause.Column{Name: "base_ref"}, Value: keep("base_ref")},
-			{Column: clause.Column{Name: "head_sha"}, Value: keep("head_sha")},
+			{Column: clause.Column{Name: "branch"}, Value: refs("branch")},
+			{Column: clause.Column{Name: "base_ref"}, Value: refs("base_ref")},
+			{Column: clause.Column{Name: "head_sha"}, Value: refs("head_sha")},
 			{Column: clause.Column{Name: "updated_at"}, Value: clause.Expr{SQL: "excluded.updated_at"}},
 		},
 	}).Create(&row).Error
@@ -260,11 +268,12 @@ func (s *Store) Claim(ctx context.Context, key string, limit int, now time.Time)
 		Seq      int64
 		Attempts int
 		NextAt   int64
+		ID       string
 		Payload  string
 	}
 	var rows []joined
 	err := s.db.WithContext(ctx).Table("outbox AS q").
-		Select("q.seq, q.attempts, q.next_at, e.payload").
+		Select("q.seq, q.attempts, q.next_at, e.id, e.payload").
 		Joins("JOIN events e ON e.seq = q.seq").
 		Where("q.sink_key = ? AND q.state = ?", key, StatePending).
 		Order("q.seq").Limit(limit).Scan(&rows).Error
@@ -281,7 +290,7 @@ func (s *Store) Claim(ctx context.Context, key string, limit int, now time.Time)
 	for _, r := range rows {
 		var e prevents.Event
 		if err := json.Unmarshal([]byte(r.Payload), &e); err != nil {
-			bad = append(bad, Settlement{Seq: r.Seq, State: StateRejected, Outcome: OutcomeRejected, Attempt: r.Attempts + 1, Err: "stored event is unreadable: " + err.Error()})
+			bad = append(bad, Settlement{Seq: r.Seq, EventID: r.ID, State: StateRejected, Outcome: OutcomeRejected, Attempt: r.Attempts + 1, Err: "stored event is unreadable: " + err.Error()})
 			continue
 		}
 		items = append(items, Item{Seq: r.Seq, Event: e, Attempts: r.Attempts})
@@ -417,6 +426,9 @@ func (s *Store) Prune(ctx context.Context, ret config.Retention, keys []string) 
 	}
 	if len(keys) > 0 {
 		steps = append(steps, db.Where("updated_at < ? AND sink_key NOT IN ?", evCut, keys).Delete(&outboxRow{}))
+	} else {
+		// No sink is configured, so every old row belongs to a gone sink.
+		steps = append(steps, db.Where("updated_at < ?", evCut).Delete(&outboxRow{}))
 	}
 	steps = append(steps, db.Where("created_at < ? AND seq NOT IN (?)", evCut, db.Model(&outboxRow{}).Select("seq")).Delete(&eventRow{}))
 	for _, st := range steps {
@@ -429,33 +441,74 @@ func (s *Store) Prune(ctx context.Context, ret config.Retention, keys []string) 
 
 // Get implements normalize.Index.
 func (s *Store) Get(p prevents.Provider, repo string, number int) (normalize.Entry, bool) {
-	return s.lookup(s.db.Where("provider = ? AND repo = ? AND number = ?", string(p), repo, number))
+	return s.Index(context.Background()).Get(p, repo, number)
 }
 
 // ByBranch implements normalize.Index. It returns the most recently updated
 // pull request that has the branch as its source.
 func (s *Store) ByBranch(p prevents.Provider, repo, branch string) (normalize.Entry, bool) {
-	if branch == "" {
-		return normalize.Entry{}, false
-	}
-	return s.lookup(s.db.Where("provider = ? AND repo = ? AND branch = ?", string(p), repo, branch))
+	return s.Index(context.Background()).ByBranch(p, repo, branch)
 }
 
 // BySHA implements normalize.Index.
 func (s *Store) BySHA(p prevents.Provider, repo, sha string) (normalize.Entry, bool) {
+	return s.Index(context.Background()).BySHA(p, repo, sha)
+}
+
+// Index returns the pull request memory for one request. Its lookups run
+// with ctx and keep the first database error, so that the caller can tell a
+// failed lookup from an unknown pull request.
+func (s *Store) Index(ctx context.Context) *RequestIndex {
+	return &RequestIndex{db: s.db.WithContext(ctx)}
+}
+
+// RequestIndex is a normalize.Index bound to one request. It is not safe
+// for concurrent use.
+type RequestIndex struct {
+	db  *gorm.DB
+	err error
+}
+
+// Err returns the first lookup error, or nil.
+func (x *RequestIndex) Err() error { return x.err }
+
+// Get implements normalize.Index.
+func (x *RequestIndex) Get(p prevents.Provider, repo string, number int) (normalize.Entry, bool) {
+	return x.lookup(x.db.Where("provider = ? AND repo = ? AND number = ?", string(p), repo, number))
+}
+
+// ByBranch implements normalize.Index.
+func (x *RequestIndex) ByBranch(p prevents.Provider, repo, branch string) (normalize.Entry, bool) {
+	if branch == "" {
+		return normalize.Entry{}, false
+	}
+	return x.lookup(x.db.Where("provider = ? AND repo = ? AND branch = ?", string(p), repo, branch))
+}
+
+// BySHA implements normalize.Index.
+func (x *RequestIndex) BySHA(p prevents.Provider, repo, sha string) (normalize.Entry, bool) {
 	if sha == "" {
 		return normalize.Entry{}, false
 	}
-	return s.lookup(s.db.Where("provider = ? AND repo = ? AND head_sha = ?", string(p), repo, sha))
+	return x.lookup(x.db.Where("provider = ? AND repo = ? AND head_sha = ?", string(p), repo, sha))
 }
 
-func (s *Store) lookup(q *gorm.DB) (normalize.Entry, bool) {
+func (x *RequestIndex) lookup(q *gorm.DB) (normalize.Entry, bool) {
 	var rows []indexRow
-	if err := q.Order("updated_at DESC").Limit(1).Find(&rows).Error; err != nil || len(rows) == 0 {
+	if err := q.Order("updated_at DESC").Limit(1).Find(&rows).Error; err != nil {
+		if x.err == nil {
+			x.err = err
+		}
+		return normalize.Entry{}, false
+	}
+	if len(rows) == 0 {
 		return normalize.Entry{}, false
 	}
 	r := rows[0]
 	return normalize.Entry{Number: r.Number, Author: r.Author, Branch: r.Branch, BaseRef: r.BaseRef, HeadSHA: r.HeadSHA}, true
 }
 
-var _ normalize.Index = (*Store)(nil)
+var (
+	_ normalize.Index = (*Store)(nil)
+	_ normalize.Index = (*RequestIndex)(nil)
+)

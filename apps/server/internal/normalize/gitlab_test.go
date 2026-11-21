@@ -1,6 +1,7 @@
 package normalize
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -193,5 +194,49 @@ func TestGitLabUnsupportedAndBadPayload(t *testing.T) {
 	}
 	if _, err := GitLab([]byte(`{"object_kind":"merge_request"}`), Context{DeliveryID: "d"}); err == nil {
 		t.Fatal("an empty merge request payload was accepted")
+	}
+}
+
+// glPatched returns a fixture whose object_attributes edit changed.
+func glPatched(t *testing.T, fixture string, edit func(attrs map[string]any)) []byte {
+	t.Helper()
+	var p map[string]any
+	if err := json.Unmarshal(testutil.Fixture(t, "gitlab/"+fixture), &p); err != nil {
+		t.Fatal(err)
+	}
+	edit(p["object_attributes"].(map[string]any))
+	out, err := json.Marshal(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+func TestGitLabMergeRequestWithoutCommit(t *testing.T) {
+	body := glPatched(t, "merge_request.open.json", func(a map[string]any) { a["last_commit"] = nil })
+	events, _ := run(t, knownMR(), func(c Context) ([]prevents.Event, error) { return GitLab(body, c) })
+	if len(events) != 1 || events[0].Kind != prevents.KindOpened || str(events[0].HeadSHA) != glSHA {
+		t.Fatalf("events = %+v", events)
+	}
+	events, _ = run(t, nil, func(c Context) ([]prevents.Event, error) { return GitLab(body, c) })
+	if len(events) != 1 || events[0].HeadSHA != nil {
+		t.Fatalf("events = %+v", events)
+	}
+}
+
+func TestGitLabMergedHasMergeCommit(t *testing.T) {
+	const sha = "4f9d4c2a8b1e7f3a6c5d0e9b8a7f6e5d4c3b2a19"
+	body := glPatched(t, "merge_request.merge.json", func(a map[string]any) { a["merge_commit_sha"] = sha })
+	events, _ := run(t, nil, func(c Context) ([]prevents.Event, error) { return GitLab(body, c) })
+	if len(events) != 1 || str(events[0].Data.(prevents.MergedData).MergeCommitSHA) != sha {
+		t.Fatalf("events = %+v", events)
+	}
+}
+
+func TestGitLabTagPipelineIsDropped(t *testing.T) {
+	body := glPatched(t, "pipeline.branch-failed.json", func(a map[string]any) { a["tag"] = true })
+	events, drops := run(t, knownMR(), func(c Context) ([]prevents.Event, error) { return GitLab(body, c) })
+	if len(events) != 0 || len(drops) != 1 || drops[0] != DropNoPullRequest {
+		t.Fatalf("events = %+v drops = %v", events, drops)
 	}
 }

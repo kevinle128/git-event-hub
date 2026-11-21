@@ -78,6 +78,7 @@ func glMergeRequestDrafts(body []byte, c Context) ([]draft, error) {
 			WorkInProgress      bool   `json:"work_in_progress"`
 			MergeStatus         string `json:"merge_status"`
 			DetailedMergeStatus string `json:"detailed_merge_status"`
+			MergeCommitSHA      string `json:"merge_commit_sha"`
 			LastCommit          struct {
 				ID string `json:"id"`
 			} `json:"last_commit"`
@@ -88,11 +89,18 @@ func glMergeRequestDrafts(body []byte, c Context) ([]draft, error) {
 	}
 	a := p.Attrs
 	repo := p.Project.PathWithNamespace
-	if repo == "" || a.IID < 1 || a.LastCommit.ID == "" {
-		return nil, fmt.Errorf("missing project, iid or last commit")
+	if repo == "" || a.IID < 1 {
+		return nil, fmt.Errorf("missing project or iid")
+	}
+	// last_commit is null while the merge request has no commit of its own.
+	head := a.LastCommit.ID
+	if head == "" {
+		if e, ok := c.index().Get(prevents.GitLab, repo, a.IID); ok {
+			head = e.HeadSHA
+		}
 	}
 	base := draft{
-		repo: repo, number: a.IID, head: a.LastCommit.ID, base: a.TargetBranch, branch: a.SourceBranch,
+		repo: repo, number: a.IID, head: head, base: a.TargetBranch, branch: a.SourceBranch,
 		author: glAuthor(c, repo, a.IID, a.AuthorID, p.User), at: parseTime(a.UpdatedAt),
 	}
 	conflict := a.DetailedMergeStatus == "conflict" || a.MergeStatus == "cannot_be_merged"
@@ -104,7 +112,7 @@ func glMergeRequestDrafts(body []byte, c Context) ([]draft, error) {
 		d.data = prevents.OpenedData{Title: a.Title, URL: a.URL, Draft: a.Draft || a.WorkInProgress, Reopened: a.Action == "reopen"}
 		out = append(out, d)
 	case "update":
-		if a.OldRev != "" {
+		if a.OldRev != "" && a.LastCommit.ID != "" {
 			d := base
 			d.kind = prevents.KindPushed
 			d.data = prevents.PushedData{Before: nonEmpty(a.OldRev), After: a.LastCommit.ID, URL: a.URL}
@@ -115,7 +123,7 @@ func glMergeRequestDrafts(body []byte, c Context) ([]draft, error) {
 	case "merge":
 		d := base
 		d.kind = prevents.KindMerged
-		d.data = prevents.MergedData{MergedBy: nonEmpty(p.User.Username), URL: a.URL}
+		d.data = prevents.MergedData{MergeCommitSHA: nonEmpty(a.MergeCommitSHA), MergedBy: nonEmpty(p.User.Username), URL: a.URL}
 		return []draft{d}, nil
 	case "close":
 		d := base
@@ -145,6 +153,7 @@ func glPipelineDrafts(body []byte, c Context) ([]draft, error) {
 			Ref        string `json:"ref"`
 			SHA        string `json:"sha"`
 			Status     string `json:"status"`
+			Tag        bool   `json:"tag"`
 			FinishedAt string `json:"finished_at"`
 			CreatedAt  string `json:"created_at"`
 		} `json:"object_attributes"`
@@ -189,6 +198,11 @@ func glPipelineDrafts(body []byte, c Context) ([]draft, error) {
 	case p.MergeRequest != nil && p.MergeRequest.IID > 0:
 		d.number = p.MergeRequest.IID
 		d.base, d.branch = p.MergeRequest.TargetBranch, p.MergeRequest.SourceBranch
+	case a.Tag:
+		// A tag pipeline belongs to no merge request; its ref is a tag name,
+		// which may equal a branch name.
+		c.drop(DropNoPullRequest)
+		return nil, nil
 	default:
 		e, ok := c.index().ByBranch(prevents.GitLab, repo, a.Ref)
 		if !ok {

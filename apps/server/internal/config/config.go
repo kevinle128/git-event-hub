@@ -9,8 +9,10 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -29,10 +31,10 @@ type Config struct {
 	Database    Database     `mapstructure:"database"`
 	Log         Log          `mapstructure:"log"`
 	API         API          `mapstructure:"api"`
-	Sources     []Source     `mapstructure:"sources" validate:"dive"`
+	Sources     []Source     `mapstructure:"sources" validate:"required,min=1,dive"`
 	Defaults    Defaults     `mapstructure:"defaults"`
 	Retention   Retention    `mapstructure:"retention"`
-	Subscribers []Subscriber `mapstructure:"subscribers" validate:"dive"`
+	Subscribers []Subscriber `mapstructure:"subscribers" validate:"required,min=1,dive"`
 }
 
 // Server is the HTTP listener.
@@ -43,8 +45,8 @@ type Server struct {
 	MaxBodyBytes int64 `mapstructure:"maxBodyBytes" validate:"min=1"`
 }
 
-// Addr is host:port.
-func (s Server) Addr() string { return fmt.Sprintf("%s:%d", s.Host, s.Port) }
+// Addr is host:port, with an IPv6 host in brackets.
+func (s Server) Addr() string { return net.JoinHostPort(s.Host, strconv.Itoa(s.Port)) }
 
 // Database names the environment variable that holds the Postgres URL.
 type Database struct {

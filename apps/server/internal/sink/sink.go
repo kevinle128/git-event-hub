@@ -51,7 +51,9 @@ type Outcome struct {
 // EventSink is the port for one consumer.
 type EventSink interface {
 	// Deliver sends the batch. It returns one Outcome per event; the hub
-	// treats an event without an Outcome as Retry. A non-nil error means the
+	// treats an event without an Outcome as Retry, unless an earlier event of
+	// the batch did not finish: then the event counts as untried and keeps
+	// its attempts. A non-nil error means the
 	// whole batch failed and must be sent again. Deliver must be safe to
 	// call again with events it has already seen: the consumer dedupes by
 	// event id.

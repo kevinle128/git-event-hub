@@ -125,6 +125,7 @@ func TestNewChecksSettings(t *testing.T) {
 		"env not set":   {"url": "https://x.example", "auth": map[string]any{"type": "bearer", "secretEnv": "NOPE"}},
 		"unknown key":   {"url": "https://x.example", "retries": 3},
 		"unknown inner": {"url": "https://x.example", "auth": map[string]any{"type": "none", "secret": "x"}},
+		"env no type":   {"url": "https://x.example", "auth": map[string]any{"secretEnv": "TOKEN"}},
 	}
 	for name, settings := range tests {
 		t.Run(name, func(t *testing.T) {

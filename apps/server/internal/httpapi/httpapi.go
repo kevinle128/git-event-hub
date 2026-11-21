@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -127,6 +128,12 @@ func (s *Server) requestLog(next echo.HandlerFunc) echo.HandlerFunc {
 
 // ReceiveHook implements POST /hooks/{source}.
 func (s *Server) ReceiveHook(c echo.Context, src string) error {
+	// An unknown or disabled source gets its answer before the body is read,
+	// so a stranger can neither make the hub buffer a body nor add metric
+	// labels with made-up names.
+	if res, ok := s.hub.CheckSource(src); !ok {
+		return hookAnswer(c, res)
+	}
 	r := c.Request()
 	r.Body = http.MaxBytesReader(c.Response(), r.Body, s.hub.MaxBodyBytes())
 	body, err := io.ReadAll(r.Body)
@@ -142,7 +149,10 @@ func (s *Server) ReceiveHook(c echo.Context, src string) error {
 	// lost, but the forge's retry is deduplicated.
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 30*time.Second)
 	defer cancel()
-	res := s.hub.Receive(ctx, src, r.Header, body)
+	return hookAnswer(c, s.hub.Receive(ctx, src, r.Header, body))
+}
+
+func hookAnswer(c echo.Context, res hub.Result) error {
 	out := api.HookResult{Accepted: &res.Accepted, Dropped: &res.Dropped}
 	if res.Duplicate {
 		out.Duplicate = &res.Duplicate
@@ -169,6 +179,10 @@ func (s *Server) GetHealth(c echo.Context) error {
 		return c.JSON(http.StatusServiceUnavailable, h)
 	}
 	for _, st := range s.hub.Statuses(c.Request().Context()) {
+		if st.StatsErr != nil {
+			h.Status = api.DatabaseUnavailable
+			return c.JSON(http.StatusServiceUnavailable, h)
+		}
 		h.Sinks.Total++
 		if st.Healthy {
 			h.Sinks.Healthy++
@@ -187,10 +201,16 @@ func (s *Server) GetMetrics(c echo.Context) error {
 			healthy = 1
 		}
 		gauges = append(gauges,
-			metrics.Gauge{Name: "hub_queue_pending", Labels: []string{"sink", st.Key}, Value: float64(st.Pending)},
-			metrics.Gauge{Name: "hub_queue_oldest_seconds", Labels: []string{"sink", st.Key}, Value: st.OldestSec},
 			metrics.Gauge{Name: "hub_sink_healthy", Labels: []string{"sink", st.Key}, Value: healthy},
 		)
+		// Without queue stats the gauges stay out: a zero would hide a
+		// growing backlog.
+		if st.StatsErr == nil {
+			gauges = append(gauges,
+				metrics.Gauge{Name: "hub_queue_pending", Labels: []string{"sink", st.Key}, Value: float64(st.Pending)},
+				metrics.Gauge{Name: "hub_queue_oldest_seconds", Labels: []string{"sink", st.Key}, Value: st.OldestSec},
+			)
+		}
 	}
 	c.Response().Header().Set(echo.HeaderContentType, "text/plain; version=0.0.4")
 	c.Response().WriteHeader(http.StatusOK)
@@ -199,6 +219,12 @@ func (s *Server) GetMetrics(c echo.Context) error {
 
 // ListEvents implements GET /api/events.
 func (s *Server) ListEvents(c echo.Context, p api.ListEventsParams) error {
+	if p.Number != nil && *p.Number < 1 {
+		return c.JSON(http.StatusBadRequest, api.Error{Error: "number must be at least 1"})
+	}
+	if msg := pageError(p.Before, p.Limit); msg != "" {
+		return c.JSON(http.StatusBadRequest, api.Error{Error: msg})
+	}
 	q := store.EventQuery{
 		Subscriber: val(p.Subscriber), Repo: val(p.Repo), Kind: val(p.Kind),
 		Number: val(p.Number), Before: val(p.Before), Limit: val(p.Limit),
@@ -237,6 +263,9 @@ func (s *Server) ListEvents(c echo.Context, p api.ListEventsParams) error {
 
 // ListDeliveries implements GET /api/deliveries.
 func (s *Server) ListDeliveries(c echo.Context, p api.ListDeliveriesParams) error {
+	if msg := pageError(p.Before, p.Limit); msg != "" {
+		return c.JSON(http.StatusBadRequest, api.Error{Error: msg})
+	}
 	q := store.DeliveryQuery{
 		Subscriber: val(p.Subscriber), Sink: val(p.Sink), EventID: val(p.EventId),
 		Before: val(p.Before), Limit: val(p.Limit),
@@ -277,4 +306,16 @@ func val[T any](p *T) T {
 		return zero
 	}
 	return *p
+}
+
+// pageError checks the paging parameters, which the generated binder does
+// not check against the bounds of the API description.
+func pageError(before *int64, limit *int) string {
+	if before != nil && *before < 1 {
+		return "before must be at least 1"
+	}
+	if limit != nil && (*limit < 1 || *limit > store.MaxPage) {
+		return fmt.Sprintf("limit must be between 1 and %d", store.MaxPage)
+	}
+	return ""
 }

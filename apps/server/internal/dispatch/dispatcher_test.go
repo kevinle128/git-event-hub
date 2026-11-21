@@ -178,3 +178,53 @@ func TestRunStopsWithContext(t *testing.T) {
 		t.Fatal("Run did not stop")
 	}
 }
+
+// stopsAtFirst answers like the webhook sink in single mode: it fails the
+// first event and leaves the rest of the batch without an outcome.
+type stopsAtFirst struct {
+	sink.Tracker
+	down bool
+	sent []string
+}
+
+func (s *stopsAtFirst) Deliver(_ context.Context, batch []prevents.Event) ([]sink.Outcome, error) {
+	var outs []sink.Outcome
+	for _, e := range batch {
+		s.sent = append(s.sent, e.ID)
+		if s.down {
+			return append(outs, sink.Outcome{ID: e.ID, State: sink.Retry, Err: "down"}), nil
+		}
+		outs = append(outs, sink.Outcome{ID: e.ID, State: sink.Acked})
+	}
+	return outs, nil
+}
+
+func TestUntriedEventsBehindAFailureKeepTheirAttempts(t *testing.T) {
+	s := storetest.New(t).Store()
+	a := route.Target{Subscriber: "kevin", Sink: "hermes"}
+	queue(t, s, []string{"poison", "next"}, a)
+	k := &stopsAtFirst{down: true}
+	c := &clock{t: time.Now()}
+	d := newDispatcher(a.Key(), s, k, c, metrics.New())
+	for i := 0; i < 3; i++ {
+		n, _ := d.Step(ctx)
+		require.Equal(t, 2, n, "attempt %d", i+1)
+		c.advance(time.Minute)
+	}
+	assert.Equal(t, []string{"poison", "poison", "poison"}, k.sent)
+	log, err := s.ListDeliveries(ctx, store.DeliveryQuery{EventID: "next"})
+	require.NoError(t, err)
+	assert.Empty(t, log, "an untried event must not log attempts")
+
+	k.down = false
+	n, _ := d.Step(ctx)
+	require.Equal(t, 1, n)
+	assert.Equal(t, []string{"poison", "poison", "poison", "next"}, k.sent)
+	events, err := s.ListEvents(ctx, store.EventQuery{})
+	require.NoError(t, err)
+	states := map[string]string{}
+	for _, e := range events {
+		states[e.Event.ID] = e.Targets[0].State
+	}
+	assert.Equal(t, map[string]string{"poison": store.StateFailed, "next": store.StateDone}, states)
+}

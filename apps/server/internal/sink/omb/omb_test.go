@@ -81,6 +81,14 @@ func TestDeliverFailures(t *testing.T) {
 	if _, err := s.Deliver(context.Background(), []prevents.Event{sinktest.Event("e1")}); err == nil {
 		t.Fatal("an answer that is not the ack JSON must fail the batch")
 	}
+	answer = `{"status":"ok"}`
+	if _, err := s.Deliver(context.Background(), []prevents.Event{sinktest.Event("e1")}); err == nil {
+		t.Fatal("a JSON answer without acked or rejected must fail the batch")
+	}
+	status, answer = http.StatusFound, ""
+	if _, err := s.Deliver(context.Background(), []prevents.Event{sinktest.Event("e1")}); err == nil || !strings.Contains(err.Error(), "302") {
+		t.Fatalf("a redirect must fail the batch: err = %v", err)
+	}
 	srv.Close()
 	if _, err := s.Deliver(context.Background(), []prevents.Event{sinktest.Event("e1")}); err == nil {
 		t.Fatal("a connection error must fail the batch")

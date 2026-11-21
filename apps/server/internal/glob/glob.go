@@ -30,7 +30,9 @@ func Compile(p string) (Pattern, error) {
 		case p[i] == '*':
 			b.WriteString("[^/]*")
 		default:
-			b.WriteString(regexp.QuoteMeta(string(p[i])))
+			// A one-byte slice keeps the bytes of a multi-byte character;
+			// string(p[i]) would turn each byte into a rune of its own.
+			b.WriteString(regexp.QuoteMeta(p[i : i+1]))
 		}
 	}
 	b.WriteString("$")

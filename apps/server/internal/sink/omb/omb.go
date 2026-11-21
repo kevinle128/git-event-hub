@@ -56,9 +56,11 @@ func New(spec sink.Spec) (sink.EventSink, error) {
 	return &Sink{url: s.URL, secret: []byte(spec.Env(s.SecretEnv)), now: time.Now}, nil
 }
 
+// answer is the body of a 200 from omb. A field that is missing stays nil,
+// so an unrelated JSON body is told apart from an empty answer.
 type answer struct {
-	Acked    []string `json:"acked"`
-	Rejected []string `json:"rejected"`
+	Acked    *[]string `json:"acked"`
+	Rejected *[]string `json:"rejected"`
 }
 
 // Deliver sends the batch.
@@ -86,15 +88,19 @@ func (s *Sink) deliver(ctx context.Context, batch []prevents.Event) ([]sink.Outc
 		return nil, fmt.Errorf("omb answered status %d", status)
 	}
 	var a answer
-	if err := json.Unmarshal(data, &a); err != nil {
+	if err := json.Unmarshal(data, &a); err != nil || (a.Acked == nil && a.Rejected == nil) {
 		return nil, errors.New("omb answer is not the expected JSON")
 	}
 	state := map[string]sink.State{}
-	for _, id := range a.Acked {
-		state[id] = sink.Acked
+	if a.Acked != nil {
+		for _, id := range *a.Acked {
+			state[id] = sink.Acked
+		}
 	}
-	for _, id := range a.Rejected {
-		state[id] = sink.Rejected
+	if a.Rejected != nil {
+		for _, id := range *a.Rejected {
+			state[id] = sink.Rejected
+		}
 	}
 	outs := make([]sink.Outcome, 0, len(batch))
 	for _, e := range batch {

@@ -242,7 +242,7 @@ func ghCheckRunDrafts(body []byte, c Context) ([]draft, error) {
 	if p.Repository.FullName == "" || r.ID == 0 {
 		return nil, fmt.Errorf("missing repository or check run")
 	}
-	if p.Action != "completed" {
+	if p.Action != "completed" || r.Conclusion == "" {
 		c.drop(DropNotFinished)
 		return nil, nil
 	}

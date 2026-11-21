@@ -45,6 +45,7 @@ func TestDefaults(t *testing.T) {
 	c, err := Parse([]byte(minimal))
 	require.NoError(t, err)
 	assert.Equal(t, "0.0.0.0:8080", c.Server.Addr())
+	assert.Equal(t, "[::1]:8080", Server{Host: "::1", Port: 8080}.Addr())
 	assert.Equal(t, "DATABASE_URL", c.Database.URLEnv)
 	assert.Equal(t, "HUB_API_TOKEN", c.API.TokenEnv)
 	assert.Equal(t, []string{"*[bot]", "*-bot"}, c.Defaults.CommentAuthors)
@@ -70,6 +71,8 @@ func TestParseRejects(t *testing.T) {
 		"backoff order":          {strings.Replace(minimal, "sources:", "defaults: {delivery: {backoff: {initial: 1m, max: 1s}}}\nsources:", 1), "backoff.max"},
 		"bad port":               {"server: {port: 70000}\n" + minimal, "Port"},
 		"bad duration":           {strings.Replace(minimal, "sources:", "defaults: {delivery: {timeout: soon}}\nsources:", 1), "timeout"},
+		"empty file":             {"", "Sources is required"},
+		"no subscribers":         {"sources:\n  - {name: github, secretEnv: GH_SECRET}\nsubscribers: []\n", "Subscribers"},
 	}
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {

@@ -87,6 +87,7 @@ func TestRoute(t *testing.T) {
 		{"bot comment passes", ev(prevents.GitHub, "kevinle128/OpenMausBot", "kevinle128", prevents.KindComment, bot), []string{"kevin/omb"}, ""},
 		{"gitlab bot user passes", ev(prevents.GitLab, "vtc/3q/cms", "kevin.le", prevents.KindComment, prevents.CommentData{Commenter: "ocr-review-bot"}), []string{"kevin/omb"}, ""},
 		{"human comment is dropped", ev(prevents.GitHub, "kevinle128/OpenMausBot", "kevinle128", prevents.KindComment, prevents.CommentData{Commenter: "mallory"}), nil, ReasonCommentAuthor},
+		{"comment without a commenter is dropped", ev(prevents.GitHub, "kevinle128/OpenMausBot", "kevinle128", prevents.KindComment, prevents.CommentData{}), nil, ReasonCommentAuthor},
 		{"disabled subscriber gets nothing", ev(prevents.GitHub, "a/b", "gone-user", prevents.KindOpened, opened), nil, ReasonNoSubscriber},
 	}
 	for _, tt := range tests {
