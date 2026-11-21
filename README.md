@@ -164,6 +164,7 @@ The hub counts each drop in `hub_dropped_total{source,reason}`. It still answers
 | `kind_out_of_scope` | `defaults.kinds` excludes the kind. |
 | `comment_author_out_of_scope` | The commenter does not match `defaults.commentAuthors`, or the comment has no author. |
 | `review_author_out_of_scope` | A review block whose commenter does not match `defaults.reviewAuthors`, or has no author. |
+| `repo_out_of_source_scope` | The event is of a repository that the `repos` globs of the source do not cover. The hub does not route it and does not remember its pull request. |
 | `unsupported_event`, `unsupported_action` | The webhook type or action is not used. |
 | `no_pull_request` | A check or status event names no known PR. A pull request listed with a base in another repository does not count. |
 | `not_finished` | A check, workflow, pipeline or status is still running. |

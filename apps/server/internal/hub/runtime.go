@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"git-event-hub/internal/config"
+	"git-event-hub/internal/glob"
 	"git-event-hub/internal/route"
 	"git-event-hub/internal/sink"
 	"git-event-hub/internal/source"
@@ -16,11 +17,14 @@ type runtime struct {
 	cfg      *config.Config
 	sources  map[string]source.WebhookSource
 	disabled map[string]bool
-	router   *route.Router
+	// scopes holds the repository globs of each source that sets repos. A
+	// source without an entry answers for every repository.
+	scopes map[string]glob.Set
+	router *route.Router
 }
 
 func buildRuntime(cfg *config.Config, getenv func(string) string) (*runtime, error) {
-	rt := &runtime{cfg: cfg, sources: map[string]source.WebhookSource{}, disabled: map[string]bool{}}
+	rt := &runtime{cfg: cfg, sources: map[string]source.WebhookSource{}, disabled: map[string]bool{}, scopes: map[string]glob.Set{}}
 	for _, sc := range cfg.Sources {
 		if !sc.On() {
 			rt.disabled[sc.Name] = true
@@ -31,6 +35,13 @@ func buildRuntime(cfg *config.Config, getenv func(string) string) (*runtime, err
 			return nil, fmt.Errorf("config: source %s: %w (variable %s)", sc.Name, err, sc.SecretEnv)
 		}
 		rt.sources[sc.Name] = src
+		if len(sc.Repos) > 0 {
+			scope, err := glob.CompileSet(sc.Repos)
+			if err != nil {
+				return nil, fmt.Errorf("config: source %s: %w", sc.Name, err)
+			}
+			rt.scopes[sc.Name] = scope
+		}
 	}
 	r, err := route.New(cfg)
 	if err != nil {
