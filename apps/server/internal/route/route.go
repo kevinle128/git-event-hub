@@ -20,6 +20,7 @@ import (
 const (
 	ReasonKind          = "kind_out_of_scope"
 	ReasonCommentAuthor = "comment_author_out_of_scope"
+	ReasonReviewAuthor  = "review_author_out_of_scope"
 	ReasonNoOwner       = "no_owner"
 	ReasonNoSubscriber  = "no_subscriber"
 	ReasonFiltered      = "filtered"
@@ -38,6 +39,7 @@ func (t Target) Key() string { return config.Key(t.Subscriber, t.Sink) }
 type Router struct {
 	kinds          map[prevents.Kind]bool
 	commentAuthors glob.Set
+	reviewAuthors  glob.Set
 	owners         map[prevents.Provider]map[string]int // login (lower case) -> index in subs
 	subs           []subscriber
 }
@@ -66,9 +68,14 @@ func New(c *config.Config) (*Router, error) {
 	if err != nil {
 		return nil, err
 	}
+	ra, err := glob.CompileSet(c.Defaults.ReviewAuthors)
+	if err != nil {
+		return nil, err
+	}
 	r := &Router{
 		kinds:          kindSet(c.Defaults.Kinds),
 		commentAuthors: ca,
+		reviewAuthors:  ra,
 		owners:         map[prevents.Provider]map[string]int{},
 	}
 	for _, p := range prevents.Providers {
@@ -117,12 +124,17 @@ func (r *Router) Route(e prevents.Event) ([]Target, string) {
 		return nil, ReasonKind
 	}
 	// A comment counts only when a bot account wrote it. Otherwise any
-	// person could post a fake review block on a public repository. A
-	// comment without a commenter does not count either.
-	switch e.Data.(type) {
-	case prevents.CommentData, prevents.ReviewFinishedData:
+	// person could post a fake review block on a public repository. A review
+	// block needs a review account, because other bots can quote user text.
+	// A comment with no author never counts.
+	switch e.Kind {
+	case prevents.KindComment:
 		if c := e.Commenter(); c == "" || !r.commentAuthors.Any(c) {
 			return nil, ReasonCommentAuthor
+		}
+	case prevents.KindReviewFinished:
+		if c := e.Commenter(); c == "" || !r.reviewAuthors.Any(c) {
+			return nil, ReasonReviewAuthor
 		}
 	}
 	picked := map[int]bool{}

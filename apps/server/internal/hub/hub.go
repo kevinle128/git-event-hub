@@ -182,7 +182,7 @@ func (h *Hub) pruneLoop(ctx context.Context) {
 	defer t.Stop()
 	for {
 		rt := h.rt.Load()
-		if err := h.store.Prune(ctx, rt.cfg.Retention, rt.router.Keys()); err != nil && ctx.Err() == nil {
+		if err := h.store.Prune(ctx, rt.cfg.Retention, configuredKeys(rt.cfg)); err != nil && ctx.Err() == nil {
 			h.log.Error("prune failed", zap.Error(err))
 		}
 		select {
@@ -192,6 +192,10 @@ func (h *Hub) pruneLoop(ctx context.Context) {
 		}
 	}
 }
+
+// dropOutOfSourceScope is the drop reason for an event of a repository that
+// the source's repos globs do not cover.
+const dropOutOfSourceScope = "repo_out_of_source_scope"
 
 // Result is the answer to a webhook.
 type Result struct {
@@ -276,6 +280,20 @@ func (h *Hub) Receive(ctx context.Context, name string, header http.Header, body
 		h.metrics.Inc("hub_refused_total", "source", name, "reason", "payload")
 		log.Warn("payload refused", zap.Error(err))
 		return Result{Status: http.StatusBadRequest, Error: "payload does not match the forge format"}
+	}
+	// A source answers only for its own repositories. Events of other
+	// repositories are dropped before routing and before the pull request
+	// memory, so a forged payload cannot plant an owner either.
+	if scope := rt.scopes[name]; len(scope) > 0 {
+		kept := events[:0]
+		for _, e := range events {
+			if scope.Any(e.Repo) {
+				kept = append(kept, e)
+				continue
+			}
+			drops = append(drops, dropOutOfSourceScope)
+		}
+		events = kept
 	}
 	if len(events) == 0 && len(drops) == 0 {
 		drops = append(drops, "no_events")

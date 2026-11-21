@@ -1,7 +1,6 @@
 package route
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -17,6 +16,8 @@ sources:
   - {name: gitlab, secretEnv: GL}
 defaults:
   kinds: [opened, ci.finished, review.finished, comment, merged]
+  commentAuthors: ["*[bot]", "ocr-review-bot"]
+  reviewAuthors: ["ocr-review[bot]", "ocr-review-bot"]
 subscribers:
   - id: kevin
     identities: {github: [kevinle128], gitlab: [kevin.le]}
@@ -105,13 +106,68 @@ func TestRoute(t *testing.T) {
 }
 
 func TestEmptyCommenterIsDroppedWithWildcardAuthors(t *testing.T) {
-	c, err := config.Parse([]byte(strings.Replace(team, "defaults:\n", "defaults:\n  commentAuthors: [\"*\"]\n", 1)))
+	c, err := config.Parse([]byte(team))
 	require.NoError(t, err)
+	// Parse refuses a match-all pattern, so the router gets one directly: a
+	// permissive matcher must still not let a comment without a commenter in.
+	c.Defaults.CommentAuthors = []string{"*"}
 	r, err := New(c)
 	require.NoError(t, err)
 	got, reason := r.Route(ev(prevents.GitHub, "kevinle128/OpenMausBot", "kevinle128", prevents.KindComment, prevents.CommentData{}))
 	assert.Empty(t, got)
 	assert.Equal(t, ReasonCommentAuthor, reason)
+}
+
+func routeWith(t *testing.T, yaml string) *Router {
+	t.Helper()
+	c, err := config.Parse([]byte(yaml))
+	require.NoError(t, err)
+	r, err := New(c)
+	require.NoError(t, err)
+	return r
+}
+
+func TestCommentWithoutAuthorIsDropped(t *testing.T) {
+	r := router(t)
+	_, reason := r.Route(ev(prevents.GitHub, "kevinle128/OpenMausBot", "kevinle128", prevents.KindComment, prevents.CommentData{}))
+	assert.Equal(t, ReasonCommentAuthor, reason)
+	_, reason = r.Route(ev(prevents.GitHub, "kevinle128/OpenMausBot", "kevinle128", prevents.KindReviewFinished, prevents.ReviewFinishedData{}))
+	assert.Equal(t, ReasonReviewAuthor, reason)
+}
+
+func TestReviewFinishedNeedsAReviewAuthor(t *testing.T) {
+	r := router(t)
+	_, reason := r.Route(ev(prevents.GitHub, "kevinle128/OpenMausBot", "kevinle128", prevents.KindReviewFinished, prevents.ReviewFinishedData{Commenter: "github-actions[bot]"}))
+	assert.Equal(t, ReasonReviewAuthor, reason)
+	got, reason := r.Route(ev(prevents.GitHub, "kevinle128/OpenMausBot", "kevinle128", prevents.KindReviewFinished, prevents.ReviewFinishedData{Commenter: "ocr-review[bot]"}))
+	assert.Empty(t, reason)
+	assert.Equal(t, []string{"kevin/omb"}, keys(got))
+}
+
+func TestBotSuffixFromAPersonIsNotACommentAuthor(t *testing.T) {
+	r := routeWith(t, `
+sources:
+  - {name: github, secretEnv: GH}
+subscribers:
+  - id: kevin
+    identities: {github: [kevinle128]}
+    sinks: [{name: omb, type: omb}]
+`)
+	_, reason := r.Route(ev(prevents.GitHub, "kevinle128/OpenMausBot", "kevinle128", prevents.KindComment, prevents.CommentData{Commenter: "mallory-bot"}))
+	assert.Equal(t, ReasonCommentAuthor, reason)
+}
+
+func TestReviewFinishedIsDroppedWithoutReviewAuthors(t *testing.T) {
+	r := routeWith(t, `
+sources:
+  - {name: github, secretEnv: GH}
+subscribers:
+  - id: kevin
+    identities: {github: [kevinle128]}
+    sinks: [{name: omb, type: omb}]
+`)
+	_, reason := r.Route(ev(prevents.GitHub, "kevinle128/OpenMausBot", "kevinle128", prevents.KindReviewFinished, prevents.ReviewFinishedData{Commenter: "ocr-review[bot]"}))
+	assert.Equal(t, ReasonReviewAuthor, reason)
 }
 
 func TestKeysListsEnabledSinks(t *testing.T) {

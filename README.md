@@ -2,7 +2,7 @@
 
 One team-wide hub for pull request events.
 
-The hub receives GitHub App webhooks and GitLab group webhooks. It verifies each webhook and turns it into an event of the **pr-event v1** contract. It sends each event to the person who opened the pull request (PR) or merge request (MR). Later events of the same PR follow the same person, because the hub remembers the PR.
+The hub receives GitHub App webhooks and GitLab group webhooks. It verifies each webhook and turns it into an event of the **pr-event v1** contract. It sends each event to the person who opened the pull request (PR) or merge request (MR). Later events of the same PR follow the same person, because the hub remembers the PR. A CI event that names only a branch or a commit finds only an open PR, and finds none when two open PRs match, because a guess would send the event to the wrong person.
 
 The hub stores each webhook in Postgres in one transaction. The transaction writes the receipt, the events and one outbox row for each sink. A dispatcher for each sink then delivers the events and retries them.
 
@@ -118,7 +118,8 @@ The hub reads only this block. It never reads the HTML around it.
 - A finished chain becomes a `review.finished` event. A chain that is still `running` gives no event (drop reason `review_running`).
 - `status` is `failed` when the chain failed. It is `needs-person` when a round has more real findings than fixed findings. Otherwise it is `success`. `items` lists the rounds that leave unresolved findings.
 - A comment with more than one block, or a block that cannot be read, becomes a `comment` event with `markerError` set.
-- Only comment authors that match `defaults.commentAuthors` count (see [Routing](#routing-and-isolation)). A person cannot fake a review block.
+- Only comment authors that match `defaults.commentAuthors` count, and a review block counts only from an account that matches `defaults.reviewAuthors` (see [Routing](#routing-and-isolation)). A person cannot fake a review block.
+- An edited GitHub comment counts as written by the account that edited it (`sender`), because an edit replaces the text. The edit of a person is dropped, even when the comment was first written by the review bot.
 
 ### Schema and versioning
 
@@ -134,7 +135,7 @@ Version 1 may gain optional fields. A consumer must ignore the fields that it do
 `route.Router` applies these rules in this order.
 
 1. **Kind scope.** If `defaults.kinds` is not empty and the kind is not in it, the event is dropped (`kind_out_of_scope`).
-2. **Comment authors.** A `comment` or `review.finished` event passes only when its commenter matches a glob of `defaults.commentAuthors`. Default: `*[bot]` and `*-bot`. Otherwise the event is dropped (`comment_author_out_of_scope`).
+2. **Comment authors.** A `comment` or `review.finished` event passes only when its commenter matches a glob of `defaults.commentAuthors`. Default: `*[bot]`. A person cannot register a login with `[`, but a login that ends in `-bot` is free to take, so the default does not include it. A GitLab bot account has no `[bot]` suffix and must be listed by its exact name. A pattern made only of `*` is refused. A comment without an author never counts. Otherwise the event is dropped (`comment_author_out_of_scope`). A `review.finished` event must also match `defaults.reviewAuthors`; there is no default, so with an empty list every `review.finished` event is dropped (`review_author_out_of_scope`).
 3. **Owner.** The event `author` is compared with the `identities` of every enabled subscriber for the provider. The comparison ignores case. The subscriber that matches owns the event.
 4. **Subscriptions (GitHub only).** A subscriber also receives a GitHub event when the repository matches a glob in one of its `subscriptions`, and the kind is in that subscription's `kinds` (or the list is empty). GitLab MRs go only to their author. This is a decision of the person.
 5. **No subscriber found.** The event is dropped. The reason is `no_owner` when the event has no author. It is `no_subscriber` when the author is unknown to every subscriber.
@@ -149,7 +150,7 @@ Isolation:
 - Each sink has its own queue and its own backoff. A down sink delays no other sink.
 - Logs and counters carry the subscriber and sink names.
 
-Glob rules (`repos`, `commentAuthors`): `*` matches any run of characters except `/`. `**` matches any run, `/` included. Matching ignores case. `[` and `]` stand for themselves, so `*[bot]` matches a login that ends with the text `[bot]`.
+Glob rules (`repos`, `commentAuthors`, `reviewAuthors`): `*` matches any run of characters except `/`. `**` matches any run, `/` included. Matching ignores case. `[` and `]` stand for themselves, so `*[bot]` matches a login that ends with the text `[bot]`.
 
 ### Drop reasons
 
@@ -161,9 +162,11 @@ The hub counts each drop in `hub_dropped_total{source,reason}`. It still answers
 | `no_subscriber` | The author is not an identity of any enabled subscriber. |
 | `filtered` | A subscriber filter or every sink filter rejected the event. |
 | `kind_out_of_scope` | `defaults.kinds` excludes the kind. |
-| `comment_author_out_of_scope` | The commenter does not match `defaults.commentAuthors`. |
+| `comment_author_out_of_scope` | The commenter does not match `defaults.commentAuthors`, or the comment has no author. |
+| `review_author_out_of_scope` | A review block whose commenter does not match `defaults.reviewAuthors`, or has no author. |
+| `repo_out_of_source_scope` | The event is of a repository that the `repos` globs of the source do not cover. The hub does not route it and does not remember its pull request. |
 | `unsupported_event`, `unsupported_action` | The webhook type or action is not used. |
-| `no_pull_request` | A check or status event names no known PR. |
+| `no_pull_request` | A check or status event names no known PR. A pull request listed with a base in another repository does not count. |
 | `not_finished` | A check, workflow, pipeline or status is still running. |
 | `covered_by_workflow_run` | A GitHub Actions check suite. The workflow event covers it. |
 | `check_run_not_failed` | A GitHub check run that did not fail. |
@@ -237,6 +240,7 @@ A list. Each entry is one forge. The hub accepts `POST /hooks/<name>`.
 | `type` | `githubapp`, `gitlab` | `githubapp` for the name `github`, otherwise the name | Adapter. |
 | `enabled` | bool | `true` | A disabled source answers `202` with `ignored` and checks nothing. |
 | `secretEnv` | string, required | none | Variable with the GitHub webhook secret or the GitLab secret token. For GitLab, a comma-separated list gives several tokens (one for each webhook). |
+| `repos` | list of globs | all repositories | Repositories that the source may speak for. Use one source for each GitLab group webhook, with its own token and `repos`. |
 
 An enabled source whose variable is empty stops the load.
 
@@ -245,7 +249,8 @@ An enabled source whose variable is empty stops the load.
 | Key | Type | Default | Meaning |
 |---|---|---|---|
 | `kinds` | list of event kinds | all kinds | Kinds that the hub accepts at all. |
-| `commentAuthors` | list of globs | `["*[bot]", "*-bot"]` | Accounts whose comments count. |
+| `commentAuthors` | list of globs | `["*[bot]"]` | Accounts whose comments count. A pattern made only of `*` is refused. |
+| `reviewAuthors` | list of globs | none | Accounts that write review blocks. Only their comments become `review.finished` events. With an empty list every `review.finished` event is dropped. A pattern made only of `*` is refused. |
 | `delivery` | object | see below | Default retry policy of every sink. |
 
 `delivery` (in `defaults` and in each sink; a zero field of a sink takes the default):
@@ -267,7 +272,7 @@ An enabled source whose variable is empty stops the load.
 | `eventsDays` | int | `30` | Events, finished outbox rows and the delivery log. |
 | `indexDays` | int | `60` | PR memory, counted from the last event of the PR. |
 
-The hub prunes once at start and then every hour. Rows of sinks that are no longer configured go after `eventsDays` too.
+The hub prunes once at start and then every hour. Rows of sinks that are no longer configured go after `eventsDays` too. A sink or subscriber that is only disabled keeps its pending rows.
 
 ### `subscribers`
 
@@ -317,7 +322,7 @@ Sink entry:
 - **`rejected`.** The consumer refused the event for good. The hub stops sending it.
 - **Outbox states:** `pending`, `done`, `rejected`, `failed`, `expired`.
 - **Delivery log.** Each attempt writes one entry. Outcomes: `acked`, `retry`, `rejected`, `failed`, `expired`. Read it with `GET /api/deliveries`.
-- A sink that gives no answer for an event counts as `retry`. A panic in a sink counts as a failed call.
+- A sink that gives no answer for any event of a batch counts every event as `retry`. When the sink answers for some events of the batch, an event without an answer was not sent: it stays pending, with no attempt counted and no log entry. A panic in a sink counts as a failed call.
 - The hub saves the result of a call even when the hub stops during the call.
 - A sink is "healthy" when its last call worked. A new sink is healthy until its first failure.
 
@@ -376,7 +381,7 @@ The body is the forge payload as sent. The signature (GitHub `X-Hub-Signature-25
 | `200` | The hub saw this delivery before (`duplicate: true`). |
 | `400` | The payload does not match the forge format, or the delivery has no id. |
 | `401` | The signature or token is missing or wrong. The answer never says which. |
-| `404` | Unknown source name. |
+| `404` | Unknown source name. The hub checks the name before it reads the body. |
 | `413` | The body is larger than `server.maxBodyBytes`. |
 | `500` | Storage error. The forge retries, and the retry is deduplicated. |
 

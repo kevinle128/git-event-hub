@@ -80,6 +80,11 @@ type Source struct {
 	// SecretEnv names the variable that holds the webhook secret (GitHub) or
 	// the secret token (GitLab; several tokens may be separated by commas).
 	SecretEnv string `mapstructure:"secretEnv" validate:"required"`
+	// Repos limits the source to repositories that match these globs. An event
+	// of any other repository is dropped and not remembered, so a token that
+	// belongs to one group cannot speak for another. Empty means every
+	// repository.
+	Repos []string `mapstructure:"repos" validate:"dive,glob"`
 }
 
 // On reports whether the source is enabled.
@@ -102,9 +107,16 @@ type Defaults struct {
 	Kinds []string `mapstructure:"kinds" validate:"dive,eventkind"`
 	// CommentAuthors lists globs of the accounts whose comments count. Only
 	// their comments become comment or review.finished events, so a person
-	// cannot fake a review block on a public repository.
-	CommentAuthors []string `mapstructure:"commentAuthors" validate:"dive,glob"`
-	Delivery       Delivery `mapstructure:"delivery"`
+	// cannot fake a review block on a public repository. The default is
+	// "*[bot]": a person cannot register a login that contains "[". A GitLab
+	// bot account has no such suffix and must be listed by its exact name. A
+	// pattern made only of "*" is refused.
+	CommentAuthors []string `mapstructure:"commentAuthors" validate:"dive,glob,notall"`
+	// ReviewAuthors lists globs of the accounts that write review blocks. Only
+	// their comments become review.finished events. There is no default: with
+	// an empty list every review.finished event is dropped.
+	ReviewAuthors []string `mapstructure:"reviewAuthors" validate:"dive,glob,notall"`
+	Delivery      Delivery `mapstructure:"delivery"`
 }
 
 // Delivery is the retry policy of a sink. A zero field of a sink takes the
@@ -229,6 +241,7 @@ func newValidator() *validator.Validate {
 		return prevents.ValidProvider(prevents.Provider(fl.Field().String()))
 	})
 	must("glob", func(fl validator.FieldLevel) bool { _, err := glob.Compile(fl.Field().String()); return err == nil })
+	must("notall", func(fl validator.FieldLevel) bool { return strings.Trim(fl.Field().String(), "*") != "" })
 	return v
 }
 
@@ -271,7 +284,7 @@ func (c *Config) applyDefaults() {
 	setStr(&c.Log.Format, "json")
 	setStr(&c.API.TokenEnv, "HUB_API_TOKEN")
 	if c.Defaults.CommentAuthors == nil {
-		c.Defaults.CommentAuthors = []string{"*[bot]", "*-bot"}
+		c.Defaults.CommentAuthors = []string{"*[bot]"}
 	}
 	d := &c.Defaults.Delivery
 	setInt(&d.BatchSize, 20)
@@ -388,6 +401,8 @@ func friendly(err error) error {
 			msgs = append(msgs, fmt.Sprintf("%s %q is not a provider (github, gitlab)", field, fe.Value()))
 		case "glob":
 			msgs = append(msgs, fmt.Sprintf("%s %q is not a valid glob", field, fe.Value()))
+		case "notall":
+			msgs = append(msgs, fmt.Sprintf("%s %q matches every account; list the bot accounts", field, fe.Value()))
 		default:
 			msgs = append(msgs, fmt.Sprintf("%s fails %s=%s (value %v)", field, fe.Tag(), fe.Param(), fe.Value()))
 		}

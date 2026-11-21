@@ -27,12 +27,24 @@ sources:
   - name: gitlab            # the GitLab group webhook
     type: gitlab
     secretEnv: GITLAB_WEBHOOK_TOKEN # several tokens may be separated by commas
+    # Only these repositories may speak through this source. Give each GitLab
+    # group webhook its own source entry, token and repos, so one token cannot
+    # speak for another group. Empty means every repository.
+    repos: ["vtc/**"]
 
 defaults:
   # Event kinds the hub accepts at all; empty means all.
   kinds: [opened, pushed, ci.finished, review.finished, comment, conflict, merged, closed]
   # Only comments of these accounts become comment or review.finished events.
-  commentAuthors: ["*[bot]", "*-bot"]
+  # "*[bot]" matches every GitHub App account; a person cannot register a
+  # login with "[". A GitLab bot account must be listed by its exact name.
+  # A pattern made only of "*" is refused. Values to confirm with the owner.
+  commentAuthors: ["*[bot]", "ocr-review-bot"]
+  # Only comments of these accounts can carry a review block and become
+  # review.finished events. With an empty list every review.finished event is
+  # dropped. Values to confirm with the owner: the OCR review bot accounts
+  # (GitHub App and GitLab user).
+  reviewAuthors: ["kevinle128-ocr[bot]", "ocr-review-bot"]
   delivery:
     batchSize: 20
     timeout: 10s
