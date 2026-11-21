@@ -1,0 +1,84 @@
+# git-event-hub configuration. Every secret is named by the environment
+# variable that holds it; no secret value belongs in this file.
+# The file reloads while the hub runs (except server, database and log).
+
+server:
+  host: 0.0.0.0
+  port: 8080
+  maxBodyBytes: 26214400 # 25 MiB
+
+database:
+  urlEnv: DATABASE_URL # postgres://user:pass@host:5432/db?sslmode=disable
+
+log:
+  level: info   # debug, info, warn, error
+  format: json  # json or console
+
+api:
+  # Bearer token for /api/* and /metrics. When the variable is empty, those
+  # endpoints refuse every request.
+  tokenEnv: HUB_API_TOKEN
+
+# One entry per forge. The name is the URL path: POST /hooks/<name>.
+sources:
+  - name: github            # the GitHub App webhook
+    type: githubapp
+    secretEnv: GITHUB_WEBHOOK_SECRET
+  - name: gitlab            # the GitLab group webhook
+    type: gitlab
+    secretEnv: GITLAB_WEBHOOK_TOKEN # several tokens may be separated by commas
+
+defaults:
+  # Event kinds the hub accepts at all; empty means all.
+  kinds: [opened, pushed, ci.finished, review.finished, comment, conflict, merged, closed]
+  # Only comments of these accounts become comment or review.finished events.
+  commentAuthors: ["*[bot]", "*-bot"]
+  delivery:
+    batchSize: 20
+    timeout: 10s
+    backoff: {initial: 2s, max: 5m}
+    maxAttempts: 20   # then the event is parked as failed
+    maxAge: 72h       # then the hub gives up on the event
+
+retention:
+  receiptsDays: 14
+  eventsDays: 30
+  indexDays: 60
+
+subscribers:
+  # A pull request or merge request opened by one of the identities belongs
+  # to the subscriber, and so does every later event of it.
+  - id: kevin
+    identities:
+      github: [kevinle128]
+      gitlab: [kevin.le]
+    sinks:
+      - name: omb
+        type: omb
+        url: http://omb.tailnet.example:4319/hooks/git-event-hub
+        secretEnv: OMB_KEVIN_SECRET
+
+  - id: lan
+    identities:
+      github: [lan-vtc]
+      gitlab: [lan.nguyen]
+    filter:
+      repos:
+        exclude: ["**/sandbox-*"]
+    # Also follow every GitHub pull request of these repositories, whoever
+    # opened it. GitLab merge requests go only to their author.
+    subscriptions:
+      - repos: ["kevinle128/git-event-hub"]
+        kinds: [opened, merged, closed]
+    sinks:
+      - name: hermes
+        type: webhook
+        url: https://hermes.example/hooks/pr-events
+        mode: batch          # single (default) or batch
+        auth:
+          type: hmac         # none, hmac or bearer
+          secretEnv: HERMES_LAN_SECRET
+        filter:
+          kinds: [ci.finished, review.finished, merged]
+        delivery:
+          maxAttempts: 10

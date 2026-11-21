@@ -1,0 +1,71 @@
+{
+  "id": 59555526715,
+  "sha": "0bc93cc2e4122a993e4a73c4531beae821cddd67",
+  "name": "kevinle128/OpenMausBot",
+  "context": "ocr-review",
+  "description": "OCR review chain ended",
+  "state": "success",
+  "target_url": null,
+  "branches": [
+    {
+      "name": "fix/desktop-update-with-remote-home",
+      "commit": {
+        "sha": "0bc93cc2e4122a993e4a73c4531beae821cddd67",
+        "url": "https://api.github.com/repos/kevinle128/OpenMausBot/commits/0bc93cc2e4122a993e4a73c4531beae821cddd67"
+      },
+      "protected": false
+    }
+  ],
+  "created_at": "2026-11-21T16:05:02Z",
+  "updated_at": "2026-11-21T16:05:02Z",
+  "repository": {
+    "id": 1457687558,
+    "node_id": "R_kgDOVuKMBg",
+    "name": "OpenMausBot",
+    "full_name": "kevinle128/OpenMausBot",
+    "private": false,
+    "owner": {
+      "login": "kevinle128",
+      "id": 9694366,
+      "node_id": "MDQ6VXNlcjk2OTQzNjY=",
+      "avatar_url": "https://avatars.githubusercontent.com/u/9694366?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/kevinle128",
+      "html_url": "https://github.com/kevinle128",
+      "followers_url": "https://api.github.com/users/kevinle128/followers",
+      "following_url": "https://api.github.com/users/kevinle128/following{/other_user}",
+      "gists_url": "https://api.github.com/users/kevinle128/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/kevinle128/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/kevinle128/subscriptions",
+      "organizations_url": "https://api.github.com/users/kevinle128/orgs",
+      "repos_url": "https://api.github.com/users/kevinle128/repos",
+      "events_url": "https://api.github.com/users/kevinle128/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/kevinle128/received_events",
+      "type": "User",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "html_url": "https://github.com/kevinle128/OpenMausBot",
+    "description": "Open-source Grok Bot alternative with a virtual machine that bots can use",
+    "fork": true,
+    "url": "https://api.github.com/repos/kevinle128/OpenMausBot",
+    "default_branch": "main",
+    "created_at": "2026-11-14T11:33:19Z",
+    "updated_at": "2026-11-14T16:49:08Z",
+    "pushed_at": "2026-11-21T16:37:20Z"
+  },
+  "sender": {
+    "login": "kevinle128",
+    "id": 9694366,
+    "node_id": "MDQ6VXNlcjk2OTQzNjY=",
+    "avatar_url": "https://avatars.githubusercontent.com/u/9694366?v=4",
+    "url": "https://api.github.com/users/kevinle128",
+    "html_url": "https://github.com/kevinle128",
+    "type": "User",
+    "site_admin": false
+  },
+  "installation": {
+    "id": 88123456,
+    "node_id": "MDIzOkludGVncmF0aW9uSW5zdGFsbGF0aW9uODgxMjM0NTY="
+  }
+}

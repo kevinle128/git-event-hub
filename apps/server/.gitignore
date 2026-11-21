@@ -49,3 +49,6 @@ Thumbs.db
 
 # Better Fullstack recovery snapshots
 .bts/recovery
+
+# Local hub configuration (a copy of config/example.yaml)
+/config/config.yaml

@@ -1,84 +1,81 @@
 # git-event-hub
 
-This file provides context about the project for AI assistants.
+This file gives context about the project to AI assistants. `AGENTS.md` has the same text. Keep both files identical.
 
-## Project Overview
+## Project overview
 
-- **Ecosystem**: Typescript
+One team-wide hub for pull request events. It receives GitHub App and GitLab group webhooks, verifies them, and turns them into the pr-event v1 contract. It routes each event to the subscriber who opened the PR or MR, stores it in Postgres in one transaction (receipt, events, one outbox row per sink), and delivers it with per-sink retries. It holds only webhook secrets and sink secrets. It never calls the GitHub API or the GitLab API.
 
-## Tech Stack
+`README.md` is the full reference: architecture, contract, routing rules, configuration keys, delivery semantics, HTTP API and setup. Read it before you change behavior.
 
-- **Runtime**: bun
-- **Package Manager**: bun
+## Tech stack
 
-### Frontend
+- **Server** (`apps/server`): Go, Echo, fx, Viper and validator (configuration), zap, GORM on Postgres, golang-migrate, oapi-codegen, golangci-lint, testify.
+- **Database**: Postgres in production. SQLite is for tests only.
+- **Web** (`apps/web`, later): React, Vite, Tailwind, shadcn/ui. Today it holds only the generated shell. The login will be VTC SSO.
 
-- Framework: react-vite
-- CSS: tailwind
-- UI Library: shadcn-ui
-
-### Database
-
-- Database: sqlite
-
-### Additional Features
-
-- Testing: vitest
-
-## Project Structure
+## Project structure
 
 ```
 git-event-hub/
 ├── apps/
-│   ├── web/         # Frontend application
-├── packages/
-│   └── db/          # Database schema
+│   ├── server/
+│   │   ├── cmd/server/       # main: flags -config, -check, -version, -healthcheck
+│   │   ├── internal/
+│   │   │   ├── source/       # inbound port; adapters githubapp, gitlab
+│   │   │   ├── normalize/    # forge payload -> prevents.Event
+│   │   │   ├── route/        # owner, subscriptions, filters, drop reasons
+│   │   │   ├── store/        # Postgres state (GORM): receipts, events, outbox, log, PR memory
+│   │   │   ├── dispatch/     # one dispatcher per sink: claim, deliver, settle, backoff
+│   │   │   ├── sink/         # outbound port; adapters omb, webhook
+│   │   │   ├── hub/          # Receive, reload, dispatcher lifecycle, pruning
+│   │   │   ├── httpapi/      # Echo handlers and bearer check
+│   │   │   ├── api/          # GENERATED from api/openapi.yaml
+│   │   │   ├── config/       # YAML configuration and live reload
+│   │   │   └── app/          # fx wiring; blank imports of the adapters
+│   │   ├── pkg/prevents/     # public event contract and review-block parser
+│   │   ├── schema/           # pr-event.v1.json and pr-event.v1.d.ts
+│   │   ├── migrations/       # embedded migrations: postgres/ and sqlite/
+│   │   ├── api/openapi.yaml  # HTTP API contract
+│   │   ├── config/           # example.yaml
+│   │   └── testdata/         # GitHub and GitLab webhook fixtures
+│   └── web/                  # React shell (later)
+├── docker-compose.yml        # hub + Postgres 16
+└── .github/workflows/ci.yml
 ```
 
-## Common Commands
+## Common commands
 
-- `bun install` - Install dependencies
-- `bun dev` - Start development server
-- `bun build` - Build for production
-- `bun test` - Run tests
-- `bun db:push` - Push database schema
-- `bun db:studio` - Open database UI
+Run the Go commands in `apps/server`.
+
+- `go run ./cmd/server -config config/example.yaml` - run the hub (needs `DATABASE_URL` and the secret variables that the config names).
+- `go run ./cmd/server -check -config config/example.yaml` - validate the config and its secrets (no database needed).
+- `go test -race ./...` - all tests on SQLite.
+- `TEST_DATABASE_URL=postgres://USER:PASSWORD@HOST:PORT/DB?sslmode=disable go test -race -count=1 ./...` - the same tests on Postgres (one schema for each test).
+- `go vet ./...` - vet.
+- `go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint run ./...` - lint.
+- `go generate ./internal/api` - regenerate the API code after you edit `api/openapi.yaml`.
+- `docker compose up --build` (in the repository root) - run the hub and Postgres. Copy the two example environment files to `.env` files first (see `README.md`).
+- `bun install`, `bun run check-types`, `bun run build` - web app only.
+
+## Rules
+
+- **No plan references.** Do not write plan names, phase numbers, finding codes or audit labels in code, comments, test names, migration names or commit messages. State the reason directly.
+- **Regenerate the API code after each spec edit.** Never edit `internal/api/openapi.gen.go` by hand. CI fails when it is out of date.
+- **Keep both migration directories in step.** Each change needs a migration in `migrations/postgres` and in `migrations/sqlite` with the same version number, the same tables and the same columns. Only the SQL dialect differs.
+- **Back up Postgres before a schema change** on a real database.
+- **Secrets are never in the config file, in Git or in logs.** The config names the environment variable (`secretEnv`, `urlEnv`, `tokenEnv`).
+- **The contract is versioned.** Keep `pkg/prevents`, `schema/pr-event.v1.json` and `schema/pr-event.v1.d.ts` in step. A removed or renamed field needs a new version. Version 1 may gain optional fields.
+- **Adapters register themselves in `init`.** A new source or sink needs one package and one blank import in `internal/app/app.go`, and tests with fixtures in `testdata/`.
+- **Run one hub instance only.** The dispatchers are not safe for several replicas.
+- **Do not weaken a test** to make it pass. Fix the cause.
+- When you change behavior, the config keys or the setup steps, update `README.md` in the same change.
 
 ## Better Fullstack project context
 
 `bts.jsonc` is the authority for the current Stack Graph. Its `stackParts` array owns role selection and `ownerPartId` bindings. Top-level option fields are a compatibility projection and must not become a second mutation path.
 
-### Stack Parts, ownership, and evidence
-
-- `backend.api:go:oapi-codegen`. It belongs to `backend:go:echo`. Evidence is `listed` with `unverified` freshness. Verification maintainer: @Marve10s.
-- `backend.codeQuality:go:golangci-lint`. It belongs to `backend:go:echo`. Evidence is `listed` with `unverified` freshness. Verification maintainer: @Marve10s.
-- `backend.config:go:viper`. It belongs to `backend:go:echo`. Evidence is `listed` with `unverified` freshness. Verification maintainer: @Marve10s.
-- `backend.libraries:go:fx`. It belongs to `backend:go:echo`. Evidence is `listed` with `unverified` freshness. Verification maintainer: @Marve10s.
-- `backend.logging:go:zap`. It belongs to `backend:go:echo`. Evidence is `listed` with `unverified` freshness. Verification maintainer: @Marve10s.
-- `backend.migrations:go:golang-migrate`. It belongs to `backend:go:echo`. Evidence is `listed` with `unverified` freshness. Verification maintainer: @Marve10s.
-- `backend.orm:go:gorm`. It belongs to `backend:go:echo`. Evidence is `listed` with `unverified` freshness. Verification maintainer: @Marve10s.
-- `backend.testing:go:gomock`. It belongs to `backend:go:echo`. Evidence is `listed` with `unverified` freshness. Verification maintainer: @Marve10s.
-- `backend.testing:go:testify`. It belongs to `backend:go:echo`. Evidence is `listed` with `unverified` freshness. Verification maintainer: @Marve10s.
-- `backend.validation:go:validator`. It belongs to `backend:go:echo`. Evidence is `listed` with `unverified` freshness. Verification maintainer: @Marve10s.
-- `backend:go:echo`. Its generated target is `apps/server`. Evidence is `listed` with `unverified` freshness. Verification maintainer: @Marve10s.
-- `containerOrchestration:universal:docker-compose`. Evidence is `listed` with `unverified` freshness. Verification maintainer: @Marve10s.
-- `continuousIntegration:universal:github-actions`. Evidence is `listed` with `unverified` freshness. Verification maintainer: @Marve10s.
-- `database:universal:sqlite`. Its generated target is `packages/db`. Evidence is `listed` with `unverified` freshness. Verification maintainer: @Marve10s.
-- `developerEnvironment:universal:devcontainer`. Evidence is `listed` with `unverified` freshness. Verification maintainer: @Marve10s.
-- `frontend.css:typescript:tailwind`. It belongs to `frontend:typescript:react-vite`. Evidence is `listed` with `unverified` freshness. Verification maintainer: @Marve10s.
-- `frontend.forms:typescript:react-hook-form`. It belongs to `frontend:typescript:react-vite`. Evidence is `listed` with `unverified` freshness. Verification maintainer: @Marve10s.
-- `frontend.ui:typescript:shadcn-ui`. It belongs to `frontend:typescript:react-vite`. Evidence is `listed` with `unverified` freshness. Verification maintainer: @Marve10s.
-- `frontend:typescript:react-vite`. Its generated target is `apps/web`. Evidence is `listed` with `unverified` freshness. Verification maintainer: @Marve10s.
-
-### Installed-version authority
-
-Use `bts.jsonc` for the generator and schema version. Use local package manifests and lockfiles for installed dependency versions. Do not assume that documentation for a newer Better Fullstack release matches this project.
-
-### Compatibility and lifecycle safety
-
-Run `create-better-fullstack context --json` for bounded roles, capabilities, evidence, compatibility issues, and safe next actions. Run `create-better-fullstack doctor --json` before repairing graph drift. Existing-project writes must start with a plan and use the exact review token. Use `create-better-fullstack recipes check --json` before editing recipe-owned paths or managed regions, and use recipe history plus project recovery commands to undo a reviewed operation.
-
-User code outside an explicit Better Fullstack managed region is not generator-owned. Missing or changed managed-region hashes stop recipe planning for manual review.
+Use `bts.jsonc` for the generator and schema version. Use local package manifests and lockfiles for installed dependency versions. User code outside an explicit Better Fullstack managed region is not generator-owned. Run `create-better-fullstack doctor --json` before you repair graph drift.
 
 <!-- <better-fullstack:recipes sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855> -->
 
@@ -86,11 +83,9 @@ User code outside an explicit Better Fullstack managed region is not generator-o
 
 ## Maintenance
 
-Keep CLAUDE.md updated when:
+Update this file when you:
 
-- Adding/removing dependencies
-- Changing project structure
-- Adding new features or services
-- Modifying build/dev workflows
-
-AI assistants should suggest updates to this file when they notice relevant changes.
+- add or remove dependencies,
+- change the project structure,
+- add a feature or a service,
+- change the build or development workflow.

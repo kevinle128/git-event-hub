@@ -26,7 +26,6 @@
     "dev:part:backend:go:echo": "bash scripts/native/task-1.sh",
     "check:part:backend:go:echo": "bash scripts/native/task-3.sh",
     "test:part:backend:go:echo": "bash scripts/native/task-3.sh",
-    "db:local": "bun run --filter @git-event-hub/db db:local",
     "test": "bun run --filter web test"
   },
   "dependencies": {

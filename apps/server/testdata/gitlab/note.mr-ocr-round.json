@@ -1,0 +1,74 @@
+{
+  "object_kind": "note",
+  "event_type": "note",
+  "user": {
+    "id": 900,
+    "name": "OCR Review",
+    "username": "ocr-review-bot",
+    "avatar_url": null,
+    "email": "[REDACTED]"
+  },
+  "project_id": 331,
+  "project": {
+    "id": 331,
+    "name": "3q-chess-cms",
+    "description": "CMS of 3Q Chess",
+    "web_url": "https://git.oceanlabs.dev/vtc/3q-chess/3q-chess-cms",
+    "avatar_url": null,
+    "git_ssh_url": "git@git.oceanlabs.dev:vtc/3q-chess/3q-chess-cms.git",
+    "git_http_url": "https://git.oceanlabs.dev/vtc/3q-chess/3q-chess-cms.git",
+    "namespace": "3q-chess",
+    "visibility_level": 0,
+    "path_with_namespace": "vtc/3q-chess/3q-chess-cms",
+    "default_branch": "dev",
+    "ci_config_path": null,
+    "homepage": "https://git.oceanlabs.dev/vtc/3q-chess/3q-chess-cms",
+    "url": "git@git.oceanlabs.dev:vtc/3q-chess/3q-chess-cms.git",
+    "ssh_url": "git@git.oceanlabs.dev:vtc/3q-chess/3q-chess-cms.git",
+    "http_url": "https://git.oceanlabs.dev/vtc/3q-chess/3q-chess-cms.git"
+  },
+  "object_attributes": {
+    "id": 88001,
+    "note": "## \ud83d\udd0d OCR review, round 1/3\n\n**(Reviewed the whole PR: `ad6a6b6...988a6db`)**\n\n<table>\n<tr><td>\ud83d\udd0e&nbsp;<strong>Found</strong>: 2 issues \u2192 1 real, 1 skipped</td></tr>\n<tr><td>\ud83d\udee0\ufe0f&nbsp;<strong>Fixed</strong>: 0</td></tr>\n<tr><td>\u26a0\ufe0f&nbsp;<strong>Needs you</strong>: 1<br>The branch <code>fix/desktop-update-with-remote-home</code> moved to <code>6c321b7</code> while the round ran, and the fix conflicts with the new head, so the bot did not push. Apply the fixes yourself.</td></tr>\n<tr><td>\ud83d\udcc4&nbsp;<strong>Scope</strong>: reviewed 3/3 files</td></tr>\n<tr><td>\ud83c\udfc1&nbsp;<strong>End</strong>: the review chain stops at this round; merge is allowed</td></tr>\n</table>\n\n### \ud83d\udd0e What was found and what happened (2)\n\n<table><thead><tr><td>#</td><td>Issue</td><td>Severity</td><td>Result</td></tr></thead>\n<tr><td>1</td><td>\n\n<details><summary>ownHomePage trusts the raw chosen origin instead of the verified own home</summary>\n\n\ud83d\udccd [`electron/main.mjs` L2558](https://github.com/kevinle128/OpenMausBot/blob/988a6db9fd34e82cff66ce0ba0bb0482eb8c0fe6/electron/main.mjs#L2558) \u00b7 Security\n\n**Problem**: `ownHomePage` used `ownHome?.origin()`. That value comes from `own-home-choice.json` whenever `home.away()` is true, and nothing checks that the saved entry is still a hand-saved server of the person's own. The gate also ignored `desktopRemoteAccess`. Nearby authority checks (`lendingTarget`, `lendableServer`, the `placePage` check in `accounts`) all use `ownHome?.home()`.\n\n**Failing scenario**: Suppose the chosen home's saved entry is replaced by a Team Cloud entry with the same origin (`withTeam`) while `own-home-choice.json` still names it. That shared server's page then gets `window.ogb.updater` and the `update:check`/`install`/`seen` channels with no confirmation dialog. In remote-client mode, the saved home origin also keeps the bridge, although `myCloud()` returns null in that mode so the bridge stays on the local page only.\n\n**Proposed fix**: `ownHomePage` now uses `desktopRemoteAccess ? null : ownHome?.home()?.origin`. This matches the sibling checks and keeps the existing single-line layout. The tests now give `ownHome` a `home()` method. They check that the bridge is refused when `home()` is null, meaning the entry is no longer hand-saved, even if `origin()` still returns the address, and refused under `desktopRemoteAccess`.\n\nProposed diff (not applied):\n\n<details><summary>Show the diff (46 lines)</summary>\n\n```diff\ndiff --git a/electron/main.mjs b/electron/main.mjs\nindex 7c5eee9f3..1b645859f 100644\n--- a/electron/main.mjs\n+++ b/electron/main.mjs\n@@ -2555,7 +2555,7 @@ const ownCloudPage = event => {\n   if (!origin || origin === myCloud() || !cloudAccount?.isOwnCloud(origin) || !cloudPageSenderAllowed(event, { contents, homeOrigin: origin, activeOrigin: origin })) return null;\n   return otherOwnClouds(cloudAccount.state().clouds).find(cloud => cloud.origin === origin) ?? null;\n };\n-const ownHomePage = event => { const origin = ownHome?.origin(), contents = mainWindow && !mainWindow.isDestroyed() ? mainWindow.webContents : null; return Boolean(origin) && cloudPageSenderAllowed(event, { contents, homeOrigin: origin, activeOrigin: activeEnvironment(environmentsState)?.origin }); }; const updaterPageAllowed = event => cloudPageAsking(event) !== null || ownCloudPage(event) !== null || ownHomePage(event); const activePageOrigin = event => { const origin = activeEnvironment(environmentsState)?.origin, contents = mainWindow && !mainWindow.isDestroyed() ? mainWindow.webContents : null; return origin && cloudPageSenderAllowed(event, { contents, homeOrigin: origin, activeOrigin: origin }) ? origin : null; }; const confirmTeamMove = async words => mainWindow && !mainWindow.isDestroyed() && (await dialog.showMessageBox(mainWindow, { type: \"warning\", ...words, defaultId: 1, cancelId: 1, noLink: true })).response === 0;\n+const ownHomePage = event => { const origin = desktopRemoteAccess ? null : ownHome?.home()?.origin, contents = mainWindow && !mainWindow.isDestroyed() ? mainWindow.webContents : null; return Boolean(origin) && cloudPageSenderAllowed(event, { contents, homeOrigin: origin, activeOrigin: activeEnvironment(environmentsState)?.origin }); }; const updaterPageAllowed = event => cloudPageAsking(event) !== null || ownCloudPage(event) !== null || ownHomePage(event); const activePageOrigin = event => { const origin = activeEnvironment(environmentsState)?.origin, contents = mainWindow && !mainWindow.isDestroyed() ? mainWindow.webContents : null; return origin && cloudPageSenderAllowed(event, { contents, homeOrigin: origin, activeOrigin: origin }) ? origin : null; }; const confirmTeamMove = async words => mainWindow && !mainWindow.isDestroyed() && (await dialog.showMessageBox(mainWindow, { type: \"warning\", ...words, defaultId: 1, cancelId: 1, noLink: true })).response === 0;\n const updaterPageOffered = event => {\n   if (updaterPageAllowed(event)) return true;\n   if (desktopRemoteAccess || cloudSignInRestored) return false;\ndiff --git a/electron/updater.test.mjs b/electron/updater.test.mjs\nindex 2551ef8a6..19b9dffdb 100644\n--- a/electron/updater.test.mjs\n+++ b/electron/updater.test.mjs\n@@ -230,8 +230,13 @@ it(\"the server the person made their home gets the update bridge and its channel\n   };\n   expect(has(MINI, \"mini\"), \"a saved server is not offered the updater until home is there\").toBe(false);\n \n-  rule.context.ownHome = { origin: () => MINI };\n+  rule.context.ownHome = { origin: () => MINI, home: () => null };\n+  expect(has(MINI, \"mini\"), \"the chosen address alone is not enough once the saved server is no longer the person's own\").toBe(false);\n+  rule.context.ownHome = { origin: () => MINI, home: () => ({ origin: MINI }) };\n   expect(has(MINI, \"mini\")).toBe(true);\n+  rule.context.desktopRemoteAccess = { endpoint: \"https://companion.example.test\" };\n+  expect(has(MINI, \"mini\"), \"a client of another computer offers the updater only on its own page\").toBe(false);\n+  rule.context.desktopRemoteAccess = false;\n   expect(has(OTHER, \"vps\"), \"another server stays refused\").toBe(false);\n   expect(has(MINI, \"vps\"), \"the home's address is not enough while the window shows another server\").toBe(false);\n   rule.show(page(MINI), \"mini\");\n@@ -245,11 +250,11 @@ it(\"the server the person made their home gets the update bridge and its channel\n   rule.show(other, \"vps\");\n   for (const channel of [\"update:check\", \"update:install\", \"update:get-state\", \"update:seen\"]) expect(() => handlers.get(channel)(other.event), channel).toThrow(/only available/);\n \n-  rule.context.ownHome = { origin: () => null };\n+  rule.context.ownHome = { origin: () => null, home: () => null };\n   rule.show(mini, \"mini\");\n   expect(() => handlers.get(\"update:check\")(mini.event)).toThrow(/only available/);\n \n-  rule.context.ownHome = { origin: () => MINI };\n+  rule.context.ownHome = { origin: () => MINI, home: () => ({ origin: MINI }) };\n   rule.show(page(MINI), \"mini\");\n   const choosing = bridgeFor(MINI, { rule });\n   await expect(choosing.bridge.updater.install()).rejects.toThrow(/Restart to update/);\n```\n\n</details>\n\n</details>\n\n<sub>`electron/main.mjs` L2558 \u00b7 Security</sub>\n\n</td><td>\ud83d\udfe0 Medium</td><td>\u26a0\ufe0f Needs you</td></tr>\n<tr><td>2</td><td>\n\n<details><summary>Renderer test asserts on its own window.ogb stub rather than AppPage gating</summary>\n\n\ud83d\udccd [`src/components/SettingsModal.updates.test.ts` L32](https://github.com/kevinle128/OpenMausBot/blob/988a6db9fd34e82cff66ce0ba0bb0482eb8c0fe6/src/components/SettingsModal.updates.test.ts#L32) \u00b7 Tests\n\n**Why skipped**: True but low impact. The added assertions are redundant: they check a hardcoded mock. They do not hide a defect, and the gating fix is in main and preload, which electron/updater.test.mjs covers.\n\n</details>\n\n<sub>`src/components/SettingsModal.updates.test.ts` L32 \u00b7 Tests</sub>\n\n</td><td>\u26aa Low</td><td>\u2796 Skipped</td></tr>\n</table>",
+    "noteable_type": "MergeRequest",
+    "author_id": 900,
+    "created_at": "2026-11-21 09:40:00 UTC",
+    "updated_at": "2026-11-21 09:41:07 UTC",
+    "project_id": 331,
+    "attachment": null,
+    "line_code": null,
+    "commit_id": "",
+    "noteable_id": 9901,
+    "system": false,
+    "st_diff": null,
+    "action": "create",
+    "url": "https://git.oceanlabs.dev/vtc/3q-chess/3q-chess-cms/-/merge_requests/12#note_88001"
+  },
+  "repository": {
+    "name": "3q-chess-cms",
+    "url": "git@git.oceanlabs.dev:vtc/3q-chess/3q-chess-cms.git",
+    "description": "CMS of 3Q Chess",
+    "homepage": "https://git.oceanlabs.dev/vtc/3q-chess/3q-chess-cms"
+  },
+  "merge_request": {
+    "id": 9901,
+    "iid": 12,
+    "target_branch": "dev",
+    "source_branch": "feat/cms-banner",
+    "source_project_id": 331,
+    "author_id": 42,
+    "title": "Add banner editor",
+    "created_at": "2026-11-21 08:12:03 UTC",
+    "updated_at": "2026-11-21 09:30:44 UTC",
+    "state": "opened",
+    "merge_status": "can_be_merged",
+    "target_project_id": 331,
+    "url": "https://git.oceanlabs.dev/vtc/3q-chess/3q-chess-cms/-/merge_requests/12",
+    "last_commit": {
+      "id": "da1560886d4f094c3e6c9ef40349f7d38b5d27d7",
+      "title": "feat: banner editor",
+      "timestamp": "2026-11-21T16:30:29+07:00",
+      "url": "https://git.oceanlabs.dev/vtc/3q-chess/3q-chess-cms/-/commit/da1560886d4f094c3e6c9ef40349f7d38b5d27d7"
+    }
+  }
+}

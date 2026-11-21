@@ -1,26 +1,27 @@
 FROM golang:1.26-alpine AS builder
 
-WORKDIR /app
+WORKDIR /src
 
-RUN apk add --no-cache build-base ca-certificates git
+RUN apk add --no-cache ca-certificates git
 
-COPY go.mod ./
+COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
-RUN CGO_ENABLED=1 GOOS=linux go build -o /out/server ./cmd/server
+ARG VERSION=dev
+# Production uses Postgres only, so the binary needs no cgo (SQLite is for tests).
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /out/server ./cmd/server
 
 FROM alpine:3.20 AS app
 
-WORKDIR /app
-
-RUN apk add --no-cache ca-certificates
+RUN apk add --no-cache ca-certificates tzdata && adduser -D -H -u 10001 hub
 
 COPY --from=builder /out/server /app/server
 
-ENV HOST=0.0.0.0 \
-    PORT=8080
-
+USER hub
+ENV HUB_CONFIG=/etc/git-event-hub/config.yaml
 EXPOSE 8080
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD ["/app/server", "-healthcheck", "http://127.0.0.1:8080/healthz"]
 
-CMD ["/app/server"]
+ENTRYPOINT ["/app/server"]

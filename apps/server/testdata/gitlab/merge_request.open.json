@@ -1,0 +1,75 @@
+{
+  "object_kind": "merge_request",
+  "event_type": "merge_request",
+  "user": {
+    "id": 42,
+    "name": "Kevin Le",
+    "username": "kevin.le",
+    "avatar_url": "https://git.oceanlabs.dev/uploads/-/system/user/avatar/42/avatar.png",
+    "email": "[REDACTED]"
+  },
+  "project": {
+    "id": 331,
+    "name": "3q-chess-cms",
+    "description": "CMS of 3Q Chess",
+    "web_url": "https://git.oceanlabs.dev/vtc/3q-chess/3q-chess-cms",
+    "avatar_url": null,
+    "git_ssh_url": "git@git.oceanlabs.dev:vtc/3q-chess/3q-chess-cms.git",
+    "git_http_url": "https://git.oceanlabs.dev/vtc/3q-chess/3q-chess-cms.git",
+    "namespace": "3q-chess",
+    "visibility_level": 0,
+    "path_with_namespace": "vtc/3q-chess/3q-chess-cms",
+    "default_branch": "dev",
+    "ci_config_path": null,
+    "homepage": "https://git.oceanlabs.dev/vtc/3q-chess/3q-chess-cms",
+    "url": "git@git.oceanlabs.dev:vtc/3q-chess/3q-chess-cms.git",
+    "ssh_url": "git@git.oceanlabs.dev:vtc/3q-chess/3q-chess-cms.git",
+    "http_url": "https://git.oceanlabs.dev/vtc/3q-chess/3q-chess-cms.git"
+  },
+  "object_attributes": {
+    "id": 9901,
+    "iid": 12,
+    "target_branch": "dev",
+    "source_branch": "feat/cms-banner",
+    "source_project_id": 331,
+    "author_id": 42,
+    "assignee_ids": [],
+    "reviewer_ids": [],
+    "title": "Add banner editor",
+    "created_at": "2026-11-21 08:12:03 UTC",
+    "updated_at": "2026-11-21 09:30:44 UTC",
+    "state_id": 1,
+    "state": "opened",
+    "blocking_discussions_resolved": true,
+    "work_in_progress": false,
+    "draft": false,
+    "first_contributor": false,
+    "merge_status": "can_be_merged",
+    "target_project_id": 331,
+    "description": "",
+    "url": "https://git.oceanlabs.dev/vtc/3q-chess/3q-chess-cms/-/merge_requests/12",
+    "last_commit": {
+      "id": "da1560886d4f094c3e6c9ef40349f7d38b5d27d7",
+      "message": "feat: banner editor\n",
+      "title": "feat: banner editor",
+      "timestamp": "2026-11-21T16:30:29+07:00",
+      "url": "https://git.oceanlabs.dev/vtc/3q-chess/3q-chess-cms/-/commit/da1560886d4f094c3e6c9ef40349f7d38b5d27d7",
+      "author": {
+        "name": "Kevin Le",
+        "email": "kevin@example.com"
+      }
+    },
+    "action": "open",
+    "detailed_merge_status": "mergeable"
+  },
+  "labels": [],
+  "changes": {},
+  "repository": {
+    "name": "3q-chess-cms",
+    "url": "git@git.oceanlabs.dev:vtc/3q-chess/3q-chess-cms.git",
+    "description": "CMS of 3Q Chess",
+    "homepage": "https://git.oceanlabs.dev/vtc/3q-chess/3q-chess-cms"
+  },
+  "reviewers": [],
+  "assignees": []
+}

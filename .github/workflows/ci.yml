@@ -7,10 +7,55 @@ on:
     branches: ["main", "master"]
 
 jobs:
-  ci:
-    name: Lint, Type Check & Build
+  server:
+    name: Server (vet, lint, tests on SQLite and Postgres)
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/server
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: hub
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: apps/server/go.mod
+          cache-dependency-path: apps/server/go.sum
+      - name: Generated API code is up to date
+        run: |
+          go generate ./internal/api
+          git diff --exit-code -- internal/api
+      - name: Vet
+        run: go vet ./...
+      - name: Lint
+        run: go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint run ./...
+      - name: Test on SQLite
+        run: go test -race ./...
+      - name: Test on Postgres
+        env:
+          TEST_DATABASE_URL: postgres://postgres:test@localhost:5432/hub?sslmode=disable
+        run: go test -race -count=1 ./...
+      - name: Example configuration is valid
+        env:
+          GITHUB_WEBHOOK_SECRET: ci
+          GITLAB_WEBHOOK_TOKEN: ci
+          OMB_KEVIN_SECRET: ci
+          HERMES_LAN_SECRET: ci
+        run: go run ./cmd/server -check -config config/example.yaml
+      - name: Docker image builds
+        run: docker build -t git-event-hub:ci .
 
+  web:
+    name: Web (type check and build)
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4

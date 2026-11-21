@@ -1,0 +1,150 @@
+{
+  "object_kind": "pipeline",
+  "object_attributes": {
+    "id": 77001,
+    "iid": 410,
+    "name": null,
+    "ref": "feat/cms-banner",
+    "tag": false,
+    "sha": "da1560886d4f094c3e6c9ef40349f7d38b5d27d7",
+    "before_sha": "91d2ac7c1bd5f6c6a2e0a1f3d84f3f5c2f6aa001",
+    "source": "merge_request_event",
+    "status": "success",
+    "detailed_status": "success",
+    "stages": [
+      "build",
+      "test"
+    ],
+    "created_at": "2026-11-21 09:31:00 UTC",
+    "finished_at": "2026-11-21 09:35:12 UTC",
+    "duration": 252,
+    "queued_duration": 3,
+    "variables": [],
+    "url": "https://git.oceanlabs.dev/vtc/3q-chess/3q-chess-cms/-/pipelines/77001"
+  },
+  "merge_request": {
+    "id": 9901,
+    "iid": 12,
+    "title": "Add banner editor",
+    "source_branch": "feat/cms-banner",
+    "source_project_id": 331,
+    "target_branch": "dev",
+    "target_project_id": 331,
+    "state": "opened",
+    "merge_status": "can_be_merged",
+    "detailed_merge_status": "mergeable",
+    "url": "https://git.oceanlabs.dev/vtc/3q-chess/3q-chess-cms/-/merge_requests/12"
+  },
+  "user": {
+    "id": 42,
+    "name": "Kevin Le",
+    "username": "kevin.le",
+    "avatar_url": "https://git.oceanlabs.dev/uploads/-/system/user/avatar/42/avatar.png",
+    "email": "[REDACTED]"
+  },
+  "project": {
+    "id": 331,
+    "name": "3q-chess-cms",
+    "description": "CMS of 3Q Chess",
+    "web_url": "https://git.oceanlabs.dev/vtc/3q-chess/3q-chess-cms",
+    "avatar_url": null,
+    "git_ssh_url": "git@git.oceanlabs.dev:vtc/3q-chess/3q-chess-cms.git",
+    "git_http_url": "https://git.oceanlabs.dev/vtc/3q-chess/3q-chess-cms.git",
+    "namespace": "3q-chess",
+    "visibility_level": 0,
+    "path_with_namespace": "vtc/3q-chess/3q-chess-cms",
+    "default_branch": "dev",
+    "ci_config_path": null,
+    "homepage": "https://git.oceanlabs.dev/vtc/3q-chess/3q-chess-cms",
+    "url": "git@git.oceanlabs.dev:vtc/3q-chess/3q-chess-cms.git",
+    "ssh_url": "git@git.oceanlabs.dev:vtc/3q-chess/3q-chess-cms.git",
+    "http_url": "https://git.oceanlabs.dev/vtc/3q-chess/3q-chess-cms.git"
+  },
+  "commit": {
+    "id": "da1560886d4f094c3e6c9ef40349f7d38b5d27d7",
+    "message": "feat: banner editor\n",
+    "title": "feat: banner editor",
+    "timestamp": "2026-11-21T16:30:29+07:00",
+    "url": "https://git.oceanlabs.dev/vtc/3q-chess/3q-chess-cms/-/commit/da1560886d4f094c3e6c9ef40349f7d38b5d27d7",
+    "author": {
+      "name": "Kevin Le",
+      "email": "kevin@example.com"
+    }
+  },
+  "builds": [
+    {
+      "id": 5001,
+      "stage": "build",
+      "name": "compile",
+      "status": "success",
+      "created_at": "2026-11-21 09:31:00 UTC",
+      "started_at": "2026-11-21 09:31:10 UTC",
+      "finished_at": "2026-11-21 09:33:00 UTC",
+      "duration": 110.0,
+      "queued_duration": 10.0,
+      "failure_reason": null,
+      "when": "on_success",
+      "manual": false,
+      "allow_failure": false,
+      "user": {
+        "id": 42,
+        "name": "Kevin Le",
+        "username": "kevin.le",
+        "avatar_url": "https://git.oceanlabs.dev/uploads/-/system/user/avatar/42/avatar.png",
+        "email": "[REDACTED]"
+      },
+      "runner": {
+        "id": 12,
+        "description": "shared-runner",
+        "runner_type": "instance_type",
+        "active": true,
+        "is_shared": true,
+        "tags": [
+          "docker"
+        ]
+      },
+      "artifacts_file": {
+        "filename": null,
+        "size": null
+      },
+      "environment": null
+    },
+    {
+      "id": 5002,
+      "stage": "test",
+      "name": "unit-tests",
+      "status": "success",
+      "created_at": "2026-11-21 09:31:00 UTC",
+      "started_at": "2026-11-21 09:31:10 UTC",
+      "finished_at": "2026-11-21 09:33:00 UTC",
+      "duration": 110.0,
+      "queued_duration": 10.0,
+      "failure_reason": null,
+      "when": "on_success",
+      "manual": false,
+      "allow_failure": false,
+      "user": {
+        "id": 42,
+        "name": "Kevin Le",
+        "username": "kevin.le",
+        "avatar_url": "https://git.oceanlabs.dev/uploads/-/system/user/avatar/42/avatar.png",
+        "email": "[REDACTED]"
+      },
+      "runner": {
+        "id": 12,
+        "description": "shared-runner",
+        "runner_type": "instance_type",
+        "active": true,
+        "is_shared": true,
+        "tags": [
+          "docker"
+        ]
+      },
+      "artifacts_file": {
+        "filename": null,
+        "size": null
+      },
+      "environment": null
+    }
+  ]
+}
