@@ -1,46 +1,83 @@
 # git-event-hub
 
-An event gateway for pull requests and merge requests. It receives webhooks from GitHub (a GitHub App) and GitLab, checks and filters them, turns them into one versioned event format, and delivers them to one or more consumers. OpenMausBot (OMB) is the first consumer; the gateway does not depend on it.
+This project was created with [Better Fullstack](https://github.com/Marve10s/Better-Fullstack), a high-performance Go stack.
 
-```
-GitHub App ──┐                                         ┌─► OMB sink
-             ├─► sources ─► normalize ─► filter ─► outbox ─┤
-GitLab hook ─┘   (verify)   (contract)  (scope)   (SQLite) └─► webhook sink (any HTTP endpoint)
-```
+## Features
 
-## What it does
+- **Go** - Fast, reliable, and efficient programming language
+- **Echo** - High performance, minimalist Go web framework
+- **GORM** - Full-featured ORM for Go
+- **oapi-codegen** - Typed OpenAPI code generation
+- **Zap** - Blazing fast, structured logging
+- **Testing** - testcontainers, testify
+- **Validation** - validator
+- **Code Quality** - golangci-lint
+- **Migrations** - golang-migrate
+- **Dependency Injection** - fx
 
-- **Sources** (`WebhookSource`): verify the request signature and parse the payload. GitHub App (`X-Hub-Signature-256`) and GitLab (`X-Gitlab-Token`) now; a new forge is one adapter.
-- **Normalize**: each source maps its payloads to the event contract, so raw forge payloads never leave the gateway.
-- **Filter**: config decides what passes: providers, repo globs, event kinds, and for GitLab only merge requests authored by the configured people.
-- **Outbox**: every accepted event is stored in SQLite before the forge gets its answer, then delivered with retries; a repeated delivery is dropped by its id.
-- **Sinks** (`EventSink`): deliver events to consumers, each with its own filter, cursor and retries, so a slow or down consumer blocks no other. OMB and a generic webhook now; a new consumer is one adapter.
+## Prerequisites
 
-The gateway holds only webhook secrets and sink secrets. It never calls the GitHub or GitLab API, so the internet-facing service cannot merge or change anything.
+- [Go](https://go.dev/) 1.25 or higher
 
-## Event contract
+## Getting Started
 
-Every event has the same shape, versioned by `v`:
+First, copy the environment file:
 
-```json
-{
-  "v": 1,
-  "id": "github:delivery-id",
-  "provider": "github",
-  "repo": "owner/name",
-  "number": 40,
-  "kind": "ci.finished",
-  "headSha": "…",
-  "baseRef": "main",
-  "branch": "fix/…",
-  "author": "login",
-  "occurredAt": "2026-11-21T16:00:00Z",
-  "data": {}
-}
+```bash
+cp .env.example .env
 ```
 
-Kinds: `opened`, `pushed`, `ci.finished`, `review.finished`, `comment`, `conflict`, `merged`, `closed`. The JSON Schema (`schema/pr-event.v1.json`) lets consumers in other languages validate events.
+Then, install dependencies and run the server:
 
-## Status
+```bash
+go mod tidy
+go run cmd/server/main.go
+```
 
-Under construction.
+The server will be running at [http://localhost:8080](http://localhost:8080).
+
+## Database Setup
+
+This project uses GORM with SQLite by default. To configure the database:
+
+1. Copy the environment file:
+
+```bash
+cp .env.example .env
+```
+
+2. Update `DATABASE_URL` in `.env` with your database connection string.
+
+Supported databases:
+
+- SQLite (default): `DATABASE_URL=./data.db`
+- PostgreSQL: `DATABASE_URL=postgres://user:pass@localhost:5432/dbname`
+
+## Project Structure
+
+```
+git-event-hub/
+├── go.mod                # Module definition
+├── cmd/
+│   └── server/           # HTTP server entry point
+│       └── main.go
+├── internal/
+│   ├── database/         # Database configuration
+│   │   └── database.go
+│   ├── models/           # GORM models
+│   │   └── models.go
+│   └── handlers/         # HTTP handlers
+│       └── handlers.go
+├── .env.example          # Environment variables template
+└── .gitignore
+```
+
+## Available Commands
+
+- `go build ./...`: Build all packages
+- `go run cmd/server/main.go`: Run the server
+- `go test ./...`: Run all tests
+- `go fmt ./...`: Format code
+- `go vet ./...`: Run static analysis
+- `go generate ./internal/api`: Regenerate OpenAPI types
+- `migrate -path migrations -database "$DATABASE_URL" up`: Run migrations
