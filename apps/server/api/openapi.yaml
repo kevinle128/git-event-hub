@@ -2,22 +2,169 @@ openapi: 3.0.3
 info:
   title: git-event-hub API
   version: 1.0.0
+  description: |
+    Receives GitHub and GitLab webhooks, turns them into pr-event v1 events
+    (schema/pr-event.v1.json) and delivers them to the sinks of each
+    subscriber. The read endpoints (/api/*, /metrics) need the bearer token
+    named by api.tokenEnv in the configuration.
 paths:
-  /health:
+  /hooks/{source}:
+    post:
+      operationId: receiveHook
+      summary: Receive one webhook delivery from a forge.
+      description: |
+        The body is the forge payload as sent; the signature (GitHub
+        X-Hub-Signature-256) or token (GitLab X-Gitlab-Token) covers the raw
+        bytes. 202 means the delivery is stored (events that no subscriber
+        wants are counted and dropped, still 202). 200 means the delivery
+        was seen before.
+      parameters:
+        - name: source
+          in: path
+          required: true
+          description: Source name from the configuration, for example github or gitlab.
+          schema: {type: string}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {type: object, additionalProperties: true}
+      responses:
+        "200": {description: Repeated delivery, ignored., content: {application/json: {schema: {$ref: "#/components/schemas/HookResult"}}}}
+        "202": {description: Delivery stored., content: {application/json: {schema: {$ref: "#/components/schemas/HookResult"}}}}
+        "400": {description: Payload does not match the forge format., content: {application/json: {schema: {$ref: "#/components/schemas/HookResult"}}}}
+        "401": {description: Signature or token is missing or wrong., content: {application/json: {schema: {$ref: "#/components/schemas/HookResult"}}}}
+        "404": {description: Unknown source., content: {application/json: {schema: {$ref: "#/components/schemas/HookResult"}}}}
+        "413": {description: Body too large., content: {application/json: {schema: {$ref: "#/components/schemas/HookResult"}}}}
+        "500": {description: Storage error; the forge retries., content: {application/json: {schema: {$ref: "#/components/schemas/HookResult"}}}}
+  /healthz:
     get:
       operationId: getHealth
+      summary: Liveness and database health. Public; carries no repository data.
       responses:
-        "200":
-          description: Service is healthy
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Health"
+        "200": {description: Healthy., content: {application/json: {schema: {$ref: "#/components/schemas/Health"}}}}
+        "503": {description: Database unavailable., content: {application/json: {schema: {$ref: "#/components/schemas/Health"}}}}
+  /metrics:
+    get:
+      operationId: getMetrics
+      summary: Prometheus text metrics.
+      security: [{bearerAuth: []}]
+      responses:
+        "200": {description: Metrics., content: {text/plain: {schema: {type: string}}}}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+  /api/events:
+    get:
+      operationId: listEvents
+      summary: Stored events, newest first, with their delivery state per sink.
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: subscriber, in: query, schema: {type: string}, description: Only events routed to this subscriber; targets then list only its sinks.}
+        - {name: provider, in: query, schema: {type: string, enum: [github, gitlab]}}
+        - {name: repo, in: query, schema: {type: string}}
+        - {name: number, in: query, schema: {type: integer, minimum: 1}}
+        - {name: kind, in: query, schema: {type: string}}
+        - {name: before, in: query, schema: {type: integer, format: int64}, description: Return events with a smaller seq (use nextBefore of the previous page).}
+        - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 200, default: 50}}
+      responses:
+        "200": {description: One page., content: {application/json: {schema: {$ref: "#/components/schemas/EventPage"}}}}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+  /api/deliveries:
+    get:
+      operationId: listDeliveries
+      summary: The delivery log, newest first. One entry per attempt and sink.
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: subscriber, in: query, schema: {type: string}}
+        - {name: sink, in: query, schema: {type: string}}
+        - {name: eventId, in: query, schema: {type: string}}
+        - {name: outcome, in: query, schema: {type: string, enum: [acked, retry, rejected, failed, expired]}}
+        - {name: before, in: query, schema: {type: integer, format: int64}, description: Return entries with a smaller id.}
+        - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 200, default: 50}}
+      responses:
+        "200": {description: One page., content: {application/json: {schema: {$ref: "#/components/schemas/DeliveryPage"}}}}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
 components:
+  securitySchemes:
+    bearerAuth: {type: http, scheme: bearer}
+  responses:
+    Unauthorized: {description: Missing or wrong bearer token., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+    BadRequest: {description: Bad query parameter., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
   schemas:
+    Error:
+      type: object
+      required: [error]
+      properties: {error: {type: string}}
+    HookResult:
+      type: object
+      properties:
+        accepted: {type: integer, description: Events stored for at least one sink.}
+        dropped: {type: integer, description: Payloads or events that no sink wants.}
+        duplicate: {type: boolean}
+        ignored: {type: string}
+        error: {type: string}
     Health:
       type: object
-      required: [status]
+      required: [status, version, contract, uptimeSeconds, sinks]
       properties:
-        status:
-          type: string
+        status: {type: string, enum: [ok, database unavailable]}
+        version: {type: string}
+        contract: {type: integer, description: pr-event contract version.}
+        uptimeSeconds: {type: integer}
+        sinks:
+          type: object
+          required: [total, healthy, pending]
+          properties:
+            total: {type: integer}
+            healthy: {type: integer}
+            pending: {type: integer, description: Events waiting over all sinks.}
+    PrEvent:
+      type: object
+      description: One pr-event v1 event; the full schema is schema/pr-event.v1.json.
+      x-go-type: prevents.Event
+      x-go-type-import: {path: git-event-hub/pkg/prevents}
+    TargetState:
+      type: object
+      required: [subscriber, sink, state, attempts, updatedAt]
+      properties:
+        subscriber: {type: string}
+        sink: {type: string}
+        state: {type: string, enum: [pending, done, rejected, failed, expired]}
+        attempts: {type: integer}
+        lastError: {type: string}
+        updatedAt: {type: string, format: date-time}
+    StoredEvent:
+      type: object
+      required: [seq, receivedAt, event, targets]
+      properties:
+        seq: {type: integer, format: int64}
+        receivedAt: {type: string, format: date-time}
+        event: {$ref: "#/components/schemas/PrEvent"}
+        targets: {type: array, items: {$ref: "#/components/schemas/TargetState"}}
+    EventPage:
+      type: object
+      required: [items]
+      properties:
+        items: {type: array, items: {$ref: "#/components/schemas/StoredEvent"}}
+        nextBefore: {type: integer, format: int64, description: Pass as before to read the next page; absent on the last page.}
+    Delivery:
+      type: object
+      required: [id, subscriber, sink, eventSeq, eventId, attempt, outcome, durationMs, at]
+      properties:
+        id: {type: integer, format: int64}
+        subscriber: {type: string}
+        sink: {type: string}
+        eventSeq: {type: integer, format: int64}
+        eventId: {type: string}
+        attempt: {type: integer}
+        outcome: {type: string, enum: [acked, retry, rejected, failed, expired]}
+        error: {type: string}
+        durationMs: {type: integer}
+        at: {type: string, format: date-time}
+    DeliveryPage:
+      type: object
+      required: [items]
+      properties:
+        items: {type: array, items: {$ref: "#/components/schemas/Delivery"}}
+        nextBefore: {type: integer, format: int64}

@@ -1,0 +1,58 @@
+{
+  "object_kind": "note",
+  "event_type": "note",
+  "user": {
+    "id": 900,
+    "name": "OCR Review",
+    "username": "ocr-review-bot",
+    "avatar_url": null,
+    "email": "[REDACTED]"
+  },
+  "project_id": 331,
+  "project": {
+    "id": 331,
+    "name": "3q-chess-cms",
+    "description": "CMS of 3Q Chess",
+    "web_url": "https://git.oceanlabs.dev/vtc/3q-chess/3q-chess-cms",
+    "avatar_url": null,
+    "git_ssh_url": "git@git.oceanlabs.dev:vtc/3q-chess/3q-chess-cms.git",
+    "git_http_url": "https://git.oceanlabs.dev/vtc/3q-chess/3q-chess-cms.git",
+    "namespace": "3q-chess",
+    "visibility_level": 0,
+    "path_with_namespace": "vtc/3q-chess/3q-chess-cms",
+    "default_branch": "dev",
+    "ci_config_path": null,
+    "homepage": "https://git.oceanlabs.dev/vtc/3q-chess/3q-chess-cms",
+    "url": "git@git.oceanlabs.dev:vtc/3q-chess/3q-chess-cms.git",
+    "ssh_url": "git@git.oceanlabs.dev:vtc/3q-chess/3q-chess-cms.git",
+    "http_url": "https://git.oceanlabs.dev/vtc/3q-chess/3q-chess-cms.git"
+  },
+  "object_attributes": {
+    "id": 88001,
+    "note": "hello",
+    "noteable_type": "Issue",
+    "author_id": 900,
+    "created_at": "2026-11-21 09:40:00 UTC",
+    "updated_at": "2026-11-21 09:41:07 UTC",
+    "project_id": 331,
+    "attachment": null,
+    "line_code": null,
+    "commit_id": "",
+    "noteable_id": 9901,
+    "system": false,
+    "st_diff": null,
+    "action": "create",
+    "url": "https://git.oceanlabs.dev/vtc/3q-chess/3q-chess-cms/-/merge_requests/12#note_88001"
+  },
+  "repository": {
+    "name": "3q-chess-cms",
+    "url": "git@git.oceanlabs.dev:vtc/3q-chess/3q-chess-cms.git",
+    "description": "CMS of 3Q Chess",
+    "homepage": "https://git.oceanlabs.dev/vtc/3q-chess/3q-chess-cms"
+  },
+  "issue": {
+    "id": 501,
+    "iid": 4,
+    "title": "Banner bug"
+  }
+}

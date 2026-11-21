@@ -1,109 +1,97 @@
+// Command server runs git-event-hub: it receives pull request and merge
+// request webhooks from GitHub and GitLab, turns them into pr-event v1
+// events, stores them, and delivers them to the sinks of each subscriber.
 package main
 
 import (
+	"flag"
+	"fmt"
 	"net/http"
 	"os"
+	"time"
 
-	"github.com/joho/godotenv"
-	"github.com/labstack/echo/v4"
-	"github.com/labstack/echo/v4/middleware"
+	"go.uber.org/fx"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 
-	"git-event-hub/internal/database"
-	"git-event-hub/internal/handlers"
+	"git-event-hub/internal/app"
+	"git-event-hub/internal/config"
+	"git-event-hub/internal/hub"
 )
 
-var logger *zap.Logger
+var version = "dev"
 
-func initLogger() {
-	var err error
-	logLevel := os.Getenv("LOG_LEVEL")
-	if logLevel == "production" {
-		logger, err = zap.NewProduction()
-	} else {
-		logger, err = zap.NewDevelopment()
-	}
-	if err != nil {
-		panic(err)
+func main() {
+	if err := run(); err != nil {
+		fmt.Fprintln(os.Stderr, "git-event-hub:", err)
+		os.Exit(1)
 	}
 }
 
-func main() {
-	// Load environment variables
-	godotenv.Load()
+func run() error {
+	path := flag.String("config", envOr("HUB_CONFIG", "/etc/git-event-hub/config.yaml"), "path of the YAML configuration")
+	check := flag.Bool("check", false, "check the configuration and the secrets it names, then exit")
+	showVersion := flag.Bool("version", false, "print the version and exit")
+	healthcheck := flag.String("healthcheck", "", "call this URL and exit 0 when it answers 200 (for the container health check)")
+	flag.Parse()
 
-	// Initialize logger
-	initLogger()
-	defer logger.Sync()
-
-	logger.Info("Starting git-event-hub server")
-
-	// Initialize database
-	db, err := database.InitDB()
+	switch {
+	case *showVersion:
+		fmt.Println(version)
+		return nil
+	case *healthcheck != "":
+		return probe(*healthcheck)
+	}
+	cfg, err := config.Load(*path)
 	if err != nil {
-		logger.Fatal("Failed to connect to database", zap.Error(err))
+		return err
 	}
-	logger.Info("Database connected successfully")
-	_ = db // Use db in your handlers
-
-	// Get host from environment
-	host := os.Getenv("HOST")
-	if host == "" {
-		host = "0.0.0.0"
+	if *check {
+		if err := hub.Check(os.Getenv)(cfg); err != nil {
+			return err
+		}
+		fmt.Println("configuration is valid")
+		return nil
 	}
-	// Get HTTP port from environment
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "8080"
+	log, err := newLogger(cfg.Log)
+	if err != nil {
+		return err
 	}
-	addr := host + ":" + port
+	defer func() { _ = log.Sync() }()
+	log = log.With(zap.String("service", "git-event-hub"), zap.String("version", version))
+	fx.New(app.Options(*path, version, log)).Run()
+	return nil
+}
 
-	logger.Info("Starting HTTP server", zap.String("address", addr))
-
-	// CORS: pinned to CORS_ORIGIN when set, permissive otherwise.
-	corsOrigin := os.Getenv("CORS_ORIGIN")
-	if corsOrigin == "" {
-		corsOrigin = "*"
+func newLogger(c config.Log) (*zap.Logger, error) {
+	lvl, err := zapcore.ParseLevel(c.Level)
+	if err != nil {
+		return nil, err
 	}
-
-	// Create Echo instance
-	e := echo.New()
-
-	// Middleware
-	e.Use(middleware.Logger())
-	e.Use(middleware.Recover())
-	e.Use(middleware.CORSWithConfig(middleware.CORSConfig{
-		AllowOrigins: []string{corsOrigin},
-	}))
-
-	// Health check endpoint
-	e.GET("/health", func(c echo.Context) error {
-		return c.JSON(http.StatusOK, map[string]string{
-			"status":  "ok",
-			"message": "Server is running",
-		})
-	})
-
-	// Root endpoint
-	e.GET("/", func(c echo.Context) error {
-		return c.JSON(http.StatusOK, map[string]string{
-			"message": "Welcome to git-event-hub!",
-		})
-	})
-
-	e.GET("/api/users", handlers.GetUsers)
-	e.POST("/api/users", handlers.CreateUser)
-	e.GET("/api/users/:id", handlers.GetUser)
-	e.PUT("/api/users/:id", handlers.UpdateUser)
-	e.DELETE("/api/users/:id", handlers.DeleteUser)
-	e.GET("/api/posts", handlers.GetPosts)
-	e.POST("/api/posts", handlers.CreatePost)
-	e.GET("/api/posts/:id", handlers.GetPost)
-	e.PUT("/api/posts/:id", handlers.UpdatePost)
-	e.DELETE("/api/posts/:id", handlers.DeletePost)
-
-	// Start server
-	if err := e.Start(addr); err != nil && err != http.ErrServerClosed {
-		logger.Fatal("Failed to start server", zap.Error(err))
+	zc := zap.NewProductionConfig()
+	if c.Format == "console" {
+		zc = zap.NewDevelopmentConfig()
 	}
+	zc.Level = zap.NewAtomicLevelAt(lvl)
+	return zc.Build()
+}
+
+func envOr(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
+}
+
+func probe(url string) error {
+	client := &http.Client{Timeout: 3 * time.Second}
+	resp, err := client.Get(url)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("health check answered %d", resp.StatusCode)
+	}
+	return nil
 }

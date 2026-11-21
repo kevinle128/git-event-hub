@@ -1,0 +1,5 @@
+DROP TABLE IF EXISTS pr_index;
+DROP TABLE IF EXISTS delivery_log;
+DROP TABLE IF EXISTS outbox;
+DROP TABLE IF EXISTS events;
+DROP TABLE IF EXISTS webhook_receipts;

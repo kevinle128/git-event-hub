@@ -1,35 +1,22 @@
 name: git-event-hub
 
 services:
-  web:
-    build:
-      context: .
-      dockerfile: apps/web/Dockerfile.vite
-      args:
-        VITE_SERVER_URL: http://localhost:8080
-    env_file:
-      - apps/web/.env
-    ports:
-      - "3001:3000"
-    environment:
-      - NODE_ENV=production
-    depends_on:
-      - app
-    restart: unless-stopped
-
   app:
     build:
       context: apps/server
       dockerfile: Dockerfile
     env_file:
-      - apps/server/.env
-    ports:
-      - "8080:8080"
+      - path: apps/server/.env
+        required: false
     environment:
-      - CORS_ORIGIN=http://localhost:3001
-      - HOST=0.0.0.0
-      - PORT=8080
-      - DATABASE_URL=postgres://postgres:postgres@db:5432/git-event-hub?sslmode=disable
+      HUB_CONFIG: /etc/git-event-hub/${HUB_CONFIG_FILE:-example.yaml}
+      DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD:-postgres}@db:5432/git-event-hub?sslmode=disable
+    # The directory is mounted, not the file, so an edit on the host reaches
+    # the container and the hub reloads it.
+    volumes:
+      - ./apps/server/config:/etc/git-event-hub:ro
+    ports:
+      - "127.0.0.1:${HUB_PORT:-8080}:8080"
     depends_on:
       db:
         condition: service_healthy
@@ -37,20 +24,17 @@ services:
 
   db:
     image: postgres:16-alpine
-    container_name: git-event-hub-postgres
     environment:
-      POSTGRES_DB: ${POSTGRES_DB:-git-event-hub}
-      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_DB: git-event-hub
+      POSTGRES_USER: postgres
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
-    ports:
-      - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 10s
+      test: ["CMD-SHELL", "pg_isready -U postgres -d git-event-hub"]
+      interval: 5s
       timeout: 5s
-      retries: 5
+      retries: 10
     restart: unless-stopped
 
 volumes:
