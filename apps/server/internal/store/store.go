@@ -99,14 +99,17 @@ type logRow struct {
 func (logRow) TableName() string { return "delivery_log" }
 
 type indexRow struct {
-	Provider  string `gorm:"primaryKey"`
-	Repo      string `gorm:"primaryKey"`
-	Number    int    `gorm:"primaryKey;autoIncrement:false"`
-	Author    string
-	Branch    string
-	BaseRef   string
-	HeadSHA   string `gorm:"column:head_sha"`
-	UpdatedAt int64  `gorm:"autoUpdateTime:false"`
+	Provider string `gorm:"primaryKey"`
+	Repo     string `gorm:"primaryKey"`
+	Number   int    `gorm:"primaryKey;autoIncrement:false"`
+	Author   string
+	Branch   string
+	BaseRef  string
+	HeadSHA  string `gorm:"column:head_sha"`
+	// State is "open", "merged" or "closed", or empty when the hub has seen
+	// no lifecycle event of the pull request. An empty state counts as open.
+	State     string
+	UpdatedAt int64 `gorm:"autoUpdateTime:false"`
 }
 
 func (indexRow) TableName() string { return "pr_index" }
@@ -216,10 +219,25 @@ func (s *Store) Accept(ctx context.Context, a Acceptance) (duplicate bool, err e
 	return false, err
 }
 
+// prState is the pull request state that an event proves, or "" when the
+// event says nothing about it.
+func prState(k prevents.Kind) string {
+	switch k {
+	case prevents.KindOpened, prevents.KindPushed, prevents.KindConflict:
+		return "open"
+	case prevents.KindMerged:
+		return "merged"
+	case prevents.KindClosed:
+		return "closed"
+	}
+	return ""
+}
+
 func remember(tx *gorm.DB, e prevents.Event, now int64) error {
 	row := indexRow{
 		Provider: string(e.Provider), Repo: e.Repo, Number: e.Number, Author: deref(e.Author),
-		Branch: deref(e.Branch), BaseRef: deref(e.BaseRef), HeadSHA: deref(e.HeadSHA), UpdatedAt: now,
+		Branch: deref(e.Branch), BaseRef: deref(e.BaseRef), HeadSHA: deref(e.HeadSHA),
+		State: prState(e.Kind), UpdatedAt: now,
 	}
 	keep := func(col string) clause.Expr {
 		return clause.Expr{SQL: fmt.Sprintf("COALESCE(NULLIF(excluded.%[1]s, ''), pr_index.%[1]s)", col)}
@@ -231,6 +249,7 @@ func remember(tx *gorm.DB, e prevents.Event, now int64) error {
 			{Column: clause.Column{Name: "branch"}, Value: keep("branch")},
 			{Column: clause.Column{Name: "base_ref"}, Value: keep("base_ref")},
 			{Column: clause.Column{Name: "head_sha"}, Value: keep("head_sha")},
+			{Column: clause.Column{Name: "state"}, Value: keep("state")},
 			{Column: clause.Column{Name: "updated_at"}, Value: clause.Expr{SQL: "excluded.updated_at"}},
 		},
 	}).Create(&row).Error
@@ -429,33 +448,46 @@ func (s *Store) Prune(ctx context.Context, ret config.Retention, keys []string) 
 
 // Get implements normalize.Index.
 func (s *Store) Get(p prevents.Provider, repo string, number int) (normalize.Entry, bool) {
-	return s.lookup(s.db.Where("provider = ? AND repo = ? AND number = ?", string(p), repo, number))
+	var rows []indexRow
+	if err := s.db.Where("provider = ? AND repo = ? AND number = ?", string(p), repo, number).Limit(1).Find(&rows).Error; err != nil || len(rows) == 0 {
+		return normalize.Entry{}, false
+	}
+	return entryOf(rows[0]), true
 }
 
-// ByBranch implements normalize.Index. It returns the most recently updated
-// pull request that has the branch as its source.
+// ByBranch implements normalize.Index. It finds the open pull request that
+// has the branch as its source, and finds none when two match.
 func (s *Store) ByBranch(p prevents.Provider, repo, branch string) (normalize.Entry, bool) {
 	if branch == "" {
 		return normalize.Entry{}, false
 	}
-	return s.lookup(s.db.Where("provider = ? AND repo = ? AND branch = ?", string(p), repo, branch))
+	return s.lookupOpen(s.db.Where("provider = ? AND repo = ? AND branch = ?", string(p), repo, branch))
 }
 
-// BySHA implements normalize.Index.
+// BySHA implements normalize.Index. It finds the open pull request that has
+// the commit as its head, and finds none when two match.
 func (s *Store) BySHA(p prevents.Provider, repo, sha string) (normalize.Entry, bool) {
 	if sha == "" {
 		return normalize.Entry{}, false
 	}
-	return s.lookup(s.db.Where("provider = ? AND repo = ? AND head_sha = ?", string(p), repo, sha))
+	return s.lookupOpen(s.db.Where("provider = ? AND repo = ? AND head_sha = ?", string(p), repo, sha))
 }
 
-func (s *Store) lookup(q *gorm.DB) (normalize.Entry, bool) {
+// lookupOpen finds the one open pull request that the query matches. A
+// branch or commit that more than one open pull request shares does not name
+// an owner; routing by a guess would hand one member's events to another.
+// A merged or closed pull request never matches. An empty state counts as
+// open, because such a pull request has shown no lifecycle event.
+func (s *Store) lookupOpen(q *gorm.DB) (normalize.Entry, bool) {
 	var rows []indexRow
-	if err := q.Order("updated_at DESC").Limit(1).Find(&rows).Error; err != nil || len(rows) == 0 {
+	if err := q.Where("state NOT IN ?", []string{"merged", "closed"}).Limit(2).Find(&rows).Error; err != nil || len(rows) != 1 {
 		return normalize.Entry{}, false
 	}
-	r := rows[0]
-	return normalize.Entry{Number: r.Number, Author: r.Author, Branch: r.Branch, BaseRef: r.BaseRef, HeadSHA: r.HeadSHA}, true
+	return entryOf(rows[0]), true
+}
+
+func entryOf(r indexRow) normalize.Entry {
+	return normalize.Entry{Number: r.Number, Author: r.Author, Branch: r.Branch, BaseRef: r.BaseRef, HeadSHA: r.HeadSHA}
 }
 
 var _ normalize.Index = (*Store)(nil)

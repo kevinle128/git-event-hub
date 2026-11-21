@@ -2,7 +2,7 @@
 
 One team-wide hub for pull request events.
 
-The hub receives GitHub App webhooks and GitLab group webhooks. It verifies each webhook and turns it into an event of the **pr-event v1** contract. It sends each event to the person who opened the pull request (PR) or merge request (MR). Later events of the same PR follow the same person, because the hub remembers the PR.
+The hub receives GitHub App webhooks and GitLab group webhooks. It verifies each webhook and turns it into an event of the **pr-event v1** contract. It sends each event to the person who opened the pull request (PR) or merge request (MR). Later events of the same PR follow the same person, because the hub remembers the PR. A CI event that names only a branch or a commit finds only an open PR, and finds none when two open PRs match, because a guess would send the event to the wrong person.
 
 The hub stores each webhook in Postgres in one transaction. The transaction writes the receipt, the events and one outbox row for each sink. A dispatcher for each sink then delivers the events and retries them.
 
