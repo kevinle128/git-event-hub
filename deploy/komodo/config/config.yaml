@@ -1,0 +1,77 @@
+# Production configuration for the Komodo stack git-event-hub.
+# Every secret is named by the environment variable that holds it.
+# No secret value belongs in this file.
+# The container listens on 0.0.0.0:8080. Compose publishes that port on
+# 127.0.0.1 of the host. Do not change server.port: the health check calls
+# http://127.0.0.1:8080/healthz inside the container.
+# The file reloads while the hub runs (except server, database and log).
+
+server:
+  host: 0.0.0.0
+  port: 8080
+  maxBodyBytes: 26214400 # 25 MiB
+
+database:
+  urlEnv: DATABASE_URL
+
+log:
+  level: info
+  format: json
+
+api:
+  tokenEnv: HUB_API_TOKEN
+
+# One entry per forge. The name is the URL path: POST /hooks/<name>.
+sources:
+  - name: github
+    type: githubapp
+    secretEnv: GITHUB_WEBHOOK_SECRET
+    # Placeholder. Replace this list with the repositories this source may
+    # accept. "*" does not match "/". A GitLab project in a subgroup needs a
+    # longer glob on the gitlab source.
+    repos: ["kevinle128/*"]
+  - name: gitlab
+    type: gitlab
+    secretEnv: GITLAB_WEBHOOK_TOKEN
+    repos: ["kevinle128/*"]
+
+defaults:
+  kinds: [opened, pushed, ci.finished, review.finished, comment, conflict, merged, closed]
+  # Confirm these accounts with the owner before the first real webhook.
+  commentAuthors: ["*[bot]", "ocr-review-bot"]
+  reviewAuthors: ["kevinle128-ocr[bot]", "ocr-review-bot"]
+  delivery:
+    batchSize: 20
+    timeout: 10s
+    backoff: {initial: 2s, max: 5m}
+    maxAttempts: 20
+    maxAge: 72h
+
+retention:
+  receiptsDays: 14
+  eventsDays: 30
+  indexDays: 60
+
+subscribers:
+  # Starting subscriber. Add one entry per person. A pull request opened by
+  # an account that is not listed here is dropped.
+  - id: kevin
+    identities:
+      github: [kevinle128]
+      gitlab: [kevin.le]
+    sinks:
+      # One sink per OMB connector. filter.providers must name that forge only.
+      - name: omb-github
+        type: omb
+        connector: github-event
+        url: https://minis-mac-mini.taildae6a9.ts.net:8451/events/github-event
+        secretEnv: OMB_GITHUB_EVENT_SECRET
+        filter:
+          providers: [github]
+      - name: omb-gitlab
+        type: omb
+        connector: gitlab-event
+        url: https://minis-mac-mini.taildae6a9.ts.net:8451/events/gitlab-event
+        secretEnv: OMB_GITLAB_EVENT_SECRET
+        filter:
+          providers: [gitlab]

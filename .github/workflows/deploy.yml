@@ -1,0 +1,166 @@
+name: Build and deploy
+
+# CI on master must succeed before this workflow builds or deploys.
+# The deploy job runs on a self-hosted runner on the VTC dev server, because
+# the Komodo API listens only on that server (localhost:9120).
+# A pull request cannot start this workflow. workflow_run accepts only a
+# successful push to master of this repository. The jobs then check out that
+# commit, not a fork head.
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [master]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Commit, tag or branch to build and deploy. Empty uses the ref selected for this run.
+        required: false
+        type: string
+        default: ""
+
+concurrency:
+  group: deploy-master
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  # Runs on GitHub-hosted runners only. A failed or foreign CI run must not
+  # look like a successful deploy, and must not reach the self-hosted runner.
+  reject:
+    name: Stop when CI did not pass
+    if: >-
+      github.event_name == 'workflow_run' &&
+      !(
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.event == 'push' &&
+        github.event.workflow_run.head_branch == 'master' &&
+        github.event.workflow_run.head_repository.full_name == github.repository
+      )
+    runs-on: ubuntu-latest
+    steps:
+      - name: CI did not pass on master of this repository
+        env:
+          CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          TRIGGER: ${{ github.event.workflow_run.event }}
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          HEAD_REPO: ${{ github.event.workflow_run.head_repository.full_name }}
+        run: |
+          printf '%s\n' "conclusion=$CONCLUSION" "event=$TRIGGER" "branch=$HEAD_BRANCH" "repo=$HEAD_REPO" >&2
+          exit 1
+
+  config:
+    name: Check the production configuration
+    # A manual run always checks the config first. A CI completion deploys
+    # only after a successful push to master in this repository.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (
+        github.event_name == 'workflow_run' &&
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.event == 'push' &&
+        github.event.workflow_run.head_branch == 'master' &&
+        github.event.workflow_run.head_repository.full_name == github.repository
+      )
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.rev.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && (inputs.ref || github.sha) || github.event.workflow_run.head_sha }}
+
+      - id: rev
+        run: |
+          sha=$(git rev-parse --verify HEAD)
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          if [ "${{ github.event_name }}" = "workflow_run" ] && [ "$sha" != "${{ github.event.workflow_run.head_sha }}" ]; then
+            echo "checkout is not the CI commit" >&2
+            exit 1
+          fi
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: apps/server/go.mod
+          cache-dependency-path: apps/server/go.sum
+
+      - name: Production configuration is valid
+        working-directory: apps/server
+        env:
+          DATABASE_URL: postgres://postgres:ci@postgres:5432/git-event-hub?sslmode=disable
+          GITHUB_WEBHOOK_SECRET: ci
+          GITLAB_WEBHOOK_TOKEN: ci
+          HUB_API_TOKEN: ci
+          OMB_GITHUB_EVENT_SECRET: ci
+          OMB_GITLAB_EVENT_SECRET: ci
+        run: go run ./cmd/server -check -config ../../deploy/komodo/config/config.yaml
+
+  build:
+    name: Build the hub image
+    needs: config
+    if: needs.config.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      actions: write # the build cache (type=gha) writes to the Actions cache
+    outputs:
+      revision: ${{ steps.rev.outputs.revision }}
+      sha: ${{ needs.config.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.config.outputs.sha }}
+
+      - id: rev
+        run: |
+          sha=$(git rev-parse --verify HEAD)
+          if [ "$sha" != "${{ needs.config.outputs.sha }}" ]; then
+            echo "checkout is not the commit selected for this deploy" >&2
+            exit 1
+          fi
+          echo "revision=${sha:0:7}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: apps/server
+          file: apps/server/Dockerfile
+          platforms: linux/amd64
+          push: true
+          build-args: |
+            VERSION=${{ steps.rev.outputs.revision }}
+          tags: ghcr.io/kevinle128/git-event-hub:${{ steps.rev.outputs.revision }}
+          labels: |
+            org.opencontainers.image.revision=${{ steps.rev.outputs.revision }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+          cache-from: type=gha,scope=hub
+          cache-to: type=gha,mode=max,scope=hub
+
+  deploy:
+    name: Deploy to Komodo
+    needs: build
+    if: needs.build.result == 'success'
+    runs-on: [self-hosted, git-event-hub-deploy]
+    env:
+      KOMODO_URL: http://localhost:9120
+      KOMODO_API_KEY: ${{ secrets.KOMODO_API_KEY }}
+      KOMODO_API_SECRET: ${{ secrets.KOMODO_API_SECRET }}
+      REVISION: ${{ needs.build.outputs.revision }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.build.outputs.sha }}
+          sparse-checkout: deploy/komodo
+      - name: Deploy the new revision
+        run: python3 deploy/komodo/deploy-revision.py git-event-hub "$REVISION"

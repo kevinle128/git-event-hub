@@ -1,0 +1,76 @@
+# Komodo stack for the VTC dev server. Komodo runs this file from the clone
+# /etc/komodo/stacks/git-event-hub. GitHub Actions builds the hub image and
+# pushes ghcr.io/kevinle128/git-event-hub:<short-sha>. The deploy job writes
+# that tag into HUB_BUILD_REVISION. This stack does not build on the server.
+#
+# Secrets are Komodo Variables. The stack environment maps each name. This
+# file interpolates those names and holds no secret value.
+#
+# Run one hub container only. The dispatchers send each event twice when two
+# containers run. Do not scale the hub service.
+
+name: git-event-hub
+
+services:
+  hub:
+    image: ghcr.io/kevinle128/git-event-hub:${HUB_BUILD_REVISION:?set HUB_BUILD_REVISION}
+    pull_policy: missing
+    restart: unless-stopped
+    # The image runs as user hub (uid 10001). Do not set a different user.
+    environment:
+      HUB_CONFIG: /etc/git-event-hub/config.yaml
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL}
+      GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET:?set GITHUB_WEBHOOK_SECRET}
+      GITLAB_WEBHOOK_TOKEN: ${GITLAB_WEBHOOK_TOKEN:?set GITLAB_WEBHOOK_TOKEN}
+      HUB_API_TOKEN: ${HUB_API_TOKEN:?set HUB_API_TOKEN}
+      OMB_GITHUB_EVENT_SECRET: ${OMB_GITHUB_EVENT_SECRET:?set OMB_GITHUB_EVENT_SECRET}
+      OMB_GITLAB_EVENT_SECRET: ${OMB_GITLAB_EVENT_SECRET:?set OMB_GITLAB_EVENT_SECRET}
+    volumes:
+      # Mount the directory, not the file. The hub watches the file. A
+      # replaced file has a new inode, and the watcher sees it only when
+      # the directory is mounted. The path is absolute: the Komodo
+      # Periphery container can read only /etc/komodo, the docker socket
+      # and /proc.
+      - /etc/komodo/stacks/git-event-hub/deploy/komodo/config:/etc/git-event-hub:ro
+    ports:
+      # Tailscale Funnel on the host forwards to this address.
+      # Do not publish the port on 0.0.0.0.
+      - "127.0.0.1:${HUB_PORT:-8080}:8080"
+    healthcheck:
+      test: ["CMD", "/app/server", "-healthcheck", "http://127.0.0.1:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+    depends_on:
+      postgres:
+        condition: service_healthy
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: git-event-hub
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d git-event-hub"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    # No ports. Only the hub container reaches this database.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  postgres_data:

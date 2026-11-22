@@ -40,8 +40,10 @@ git-event-hub/
 │   │   ├── config/           # example.yaml
 │   │   └── testdata/         # GitHub and GitLab webhook fixtures
 │   └── web/                  # React shell (later)
+├── deploy/komodo/            # Komodo stack: compose, production config, deploy script
+├── docs/deploy.md            # operator runbook for the Komodo deploy
 ├── docker-compose.yml        # hub + Postgres 16
-└── .github/workflows/ci.yml
+└── .github/workflows/        # ci.yml and deploy.yml
 ```
 
 ## Common commands
