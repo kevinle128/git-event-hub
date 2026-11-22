@@ -73,7 +73,10 @@ func enabledSinks(cfg *config.Config) []sinkSpec {
 }
 
 func newSink(sp sinkSpec, getenv func(string) string) (sink.EventSink, error) {
-	s, err := sink.New(sp.cfg.Type, sink.Spec{Name: sp.key, Settings: sp.cfg.Settings, Env: getenv})
+	s, err := sink.New(sp.cfg.Type, sink.Spec{
+		Name: sp.key, Settings: sp.cfg.Settings, Env: getenv,
+		Providers: sp.cfg.Filter.Providers, BatchSize: sp.cfg.Delivery.BatchSize,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("config: sink %s: %w", sp.key, err)
 	}

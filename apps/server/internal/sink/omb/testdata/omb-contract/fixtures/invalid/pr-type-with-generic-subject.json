@@ -1,0 +1,44 @@
+{
+  "event": {
+    "v": 1,
+    "id": "github:delivery-0003:0",
+    "source": {
+      "connector": "github-event"
+    },
+    "type": "pr.ci.finished",
+    "occurredAt": "2026-11-22T03:00:00Z",
+    "subject": {
+      "kind": "thread",
+      "id": "thread-1"
+    },
+    "correlation": {
+      "prUrl": "https://github.com/acme/widgets/pull/42",
+      "headSha": "9f2c1d7e4b6a8035c1e2d4f6a8b0c2e4d6f81a3b"
+    },
+    "data": {
+      "headSha": "9f2c1d7e4b6a8035c1e2d4f6a8b0c2e4d6f81a3b",
+      "baseRef": "main",
+      "branch": "feat/widget",
+      "author": "octocat",
+      "url": "https://github.com/acme/widgets/pull/42",
+      "check": {
+        "source": "github-actions",
+        "scope": "job",
+        "name": "test",
+        "status": "failed",
+        "url": "https://github.com/acme/widgets/actions/runs/777/job/888",
+        "runId": "777",
+        "failedJobs": [
+          {
+            "id": "888",
+            "name": "test",
+            "url": "https://github.com/acme/widgets/actions/runs/777/job/888",
+            "stage": "build",
+            "conclusion": "failure"
+          }
+        ]
+      }
+    }
+  },
+  "reason": "type pr.ci.finished needs a pr subject"
+}

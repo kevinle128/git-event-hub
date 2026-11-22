@@ -27,7 +27,7 @@ git-event-hub/
 │   │   │   ├── route/        # owner, subscriptions, filters, drop reasons
 │   │   │   ├── store/        # Postgres state (GORM): receipts, events, outbox, log, PR memory
 │   │   │   ├── dispatch/     # one dispatcher per sink: claim, deliver, settle, backoff
-│   │   │   ├── sink/         # outbound port; adapters omb, webhook
+│   │   │   ├── sink/         # outbound port; adapters omb (OMB event contract v1), webhook
 │   │   │   ├── hub/          # Receive, reload, dispatcher lifecycle, pruning
 │   │   │   ├── httpapi/      # Echo handlers and bearer check
 │   │   │   ├── api/          # GENERATED from api/openapi.yaml

@@ -71,6 +71,14 @@ type Spec struct {
 	Settings map[string]any
 	// Env reads an environment variable. Secrets come only from here.
 	Env func(string) string
+	// Providers is the filter.providers of the sink entry. Empty means every
+	// provider. An adapter that serves one forge only uses it to refuse a
+	// configuration that would send it events of another forge.
+	Providers []string
+	// BatchSize is the effective delivery.batchSize of the sink entry, after
+	// the defaults. An adapter whose consumer limits the batch uses it to
+	// refuse a larger value. Most adapters ignore it.
+	BatchSize int
 }
 
 // Factory builds a sink. It must reject settings it does not understand.
