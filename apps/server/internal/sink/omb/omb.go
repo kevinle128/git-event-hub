@@ -98,7 +98,7 @@ type rejection struct {
 // parseRejected reads one item of the rejected list.
 func parseRejected(raw json.RawMessage) (rejection, error) {
 	var id string
-	if json.Unmarshal(raw, &id) == nil {
+	if json.Unmarshal(raw, &id) == nil && id != "" {
 		return rejection{ID: id}, nil
 	}
 	var r rejection

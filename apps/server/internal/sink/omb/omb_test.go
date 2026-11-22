@@ -207,12 +207,16 @@ func TestDeliverReadsRejectedObjectsWithReasons(t *testing.T) {
 }
 
 func TestDeliverFailsOnAMalformedRejectedItem(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(`{"acked":[],"rejected":[42]}`))
-	}))
-	defer srv.Close()
-	_, err := build(t, srv.URL).Deliver(context.Background(), []prevents.Event{sinktest.Event("e1")})
-	require.Error(t, err)
+	for _, item := range []string{`42`, `null`, `""`, `{"id":""}`, `{"id":null}`} {
+		t.Run(item, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_, _ = w.Write([]byte(`{"acked":[],"rejected":[` + item + `]}`))
+			}))
+			defer srv.Close()
+			_, err := build(t, srv.URL).Deliver(context.Background(), []prevents.Event{sinktest.Event("e1")})
+			require.Error(t, err)
+		})
+	}
 }
 
 func gitlabEvent(id string) prevents.Event {
