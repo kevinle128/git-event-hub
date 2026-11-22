@@ -1,0 +1,236 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openmausbot/schema/omb-event.v1.json",
+  "title": "OMB event v1",
+  "description": "One fact about one subject, in the form that OpenMausBot accepts from every connector. A consumer must ignore fields it does not know: version 1 may gain optional fields and new event types.",
+  "type": "object",
+  "required": ["v", "id", "source", "type", "occurredAt", "subject", "data"],
+  "properties": {
+    "v": { "const": 1, "description": "Contract version." },
+    "id": { "type": "string", "minLength": 1, "maxLength": 200, "description": "Stable across retries of the same fact. It is the dedupe key within its connector." },
+    "source": {
+      "type": "object",
+      "required": ["connector"],
+      "properties": {
+        "connector": { "type": "string", "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$", "description": "The connector definition id that produced the event, for example github-event." }
+      }
+    },
+    "type": { "type": "string", "pattern": "^[a-z][a-z0-9]*(\\.[a-z][a-z0-9_]*)+$", "description": "<domain>.<object>.<past-tense verb>. The domain fixes the subject kind." },
+    "occurredAt": { "type": "string", "format": "date-time", "description": "RFC 3339, UTC." },
+    "subject": { "$ref": "#/$defs/subject" },
+    "correlation": { "type": "object", "additionalProperties": { "type": "string" }, "description": "Optional join keys, for example prUrl and headSha." },
+    "data": { "type": "object", "description": "Must match the payload schema of type; see $defs.payloads." }
+  },
+  "$defs": {
+    "subject": {
+      "if": { "type": "object", "required": ["kind"], "properties": { "kind": { "const": "pr" } } },
+      "then": { "$ref": "#/$defs/prSubject" },
+      "else": { "$ref": "#/$defs/genericSubject" }
+    },
+    "prSubject": {
+      "type": "object",
+      "required": ["kind", "forge", "repo", "number"],
+      "properties": {
+        "kind": { "const": "pr" },
+        "forge": { "enum": ["github", "gitlab"], "description": "May gain values in v1." },
+        "repo": { "type": "string", "minLength": 1, "description": "owner/name on GitHub, the full project path on GitLab." },
+        "number": { "type": "integer", "minimum": 1, "description": "Pull request number or merge request iid." }
+      }
+    },
+    "genericSubject": {
+      "type": "object",
+      "required": ["kind", "id"],
+      "properties": {
+        "kind": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$", "not": { "const": "pr" } },
+        "id": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "label": { "type": "string" }
+      }
+    },
+    "nullableString": { "type": ["string", "null"] },
+    "prCommon": {
+      "type": "object",
+      "required": ["headSha", "baseRef", "branch", "author", "url"],
+      "properties": {
+        "headSha": { "$ref": "#/$defs/nullableString", "description": "Head commit of the pull request. Null when unknown." },
+        "baseRef": { "$ref": "#/$defs/nullableString", "description": "Target branch name. Null when unknown." },
+        "branch": { "$ref": "#/$defs/nullableString", "description": "Source branch name. Null when unknown." },
+        "author": { "$ref": "#/$defs/nullableString", "description": "Login of the person who opened the pull request. Null when unknown." },
+        "url": { "$ref": "#/$defs/nullableString", "description": "Web address of the pull request. Null when unknown." }
+      }
+    },
+    "failedJob": {
+      "type": "object",
+      "required": ["id", "name", "url"],
+      "properties": {
+        "id": { "type": "string", "description": "Forge id of the job, check run or status, as a string." },
+        "name": { "type": "string" },
+        "url": { "type": "string" },
+        "stage": { "type": "string" },
+        "conclusion": { "type": "string", "description": "Raw forge conclusion, for example failure or timed_out." }
+      }
+    },
+    "reviewItem": {
+      "type": "object",
+      "required": ["round", "scope", "real", "fixed", "unresolved"],
+      "properties": {
+        "round": { "type": "integer", "minimum": 1 },
+        "scope": { "enum": ["full", "commit"] },
+        "real": { "type": "integer", "minimum": 0 },
+        "fixed": { "type": "integer", "minimum": 0 },
+        "unresolved": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "payloads": {
+      "pr.opened": {
+        "allOf": [
+          { "$ref": "#/$defs/prCommon" },
+          {
+            "type": "object",
+            "required": ["title", "draft", "reopened"],
+            "properties": {
+              "title": { "type": "string" },
+              "draft": { "type": "boolean" },
+              "reopened": { "type": "boolean", "description": "True when the pull request was opened again." }
+            }
+          }
+        ]
+      },
+      "pr.pushed": {
+        "allOf": [
+          { "$ref": "#/$defs/prCommon" },
+          {
+            "type": "object",
+            "required": ["before", "after"],
+            "properties": {
+              "before": { "$ref": "#/$defs/nullableString", "description": "Head before the push, when the forge says." },
+              "after": { "type": "string", "description": "Head after the push." }
+            }
+          }
+        ]
+      },
+      "pr.ci.finished": {
+        "allOf": [
+          { "$ref": "#/$defs/prCommon" },
+          {
+            "type": "object",
+            "required": ["check"],
+            "properties": {
+              "check": {
+                "type": "object",
+                "required": ["source", "scope", "name", "status", "url", "failedJobs"],
+                "properties": {
+                  "source": { "type": "string", "description": "github-actions, gitlab-ci, the slug of a check suite app, or status:<context>." },
+                  "scope": { "enum": ["workflow", "suite", "job", "status", "pipeline"] },
+                  "name": { "type": "string" },
+                  "status": { "enum": ["passed", "failed", "cancelled", "skipped"] },
+                  "url": { "type": "string" },
+                  "runId": { "type": "string" },
+                  "failedJobs": { "type": "array", "items": { "$ref": "#/$defs/failedJob" }, "description": "Never null. A GitHub workflow or suite event lists no jobs." }
+                }
+              }
+            }
+          }
+        ]
+      },
+      "pr.review.finished": {
+        "allOf": [
+          { "$ref": "#/$defs/prCommon" },
+          {
+            "type": "object",
+            "required": ["review"],
+            "properties": {
+              "review": {
+                "type": "object",
+                "required": ["source", "status", "reviewedSha", "rounds", "maxRounds", "items", "commenter", "commentId", "commentUrl"],
+                "properties": {
+                  "source": { "type": "string", "minLength": 1, "description": "The review system, for example ocr." },
+                  "status": { "enum": ["success", "needs-person", "failed"] },
+                  "reviewedSha": { "type": "string", "description": "Last commit that the review chain looked at. Compare it with the pull request head." },
+                  "rounds": { "type": "integer", "minimum": 0 },
+                  "maxRounds": { "type": "integer", "minimum": 0 },
+                  "items": { "type": "array", "items": { "$ref": "#/$defs/reviewItem" }, "description": "Rounds that left real findings unfixed." },
+                  "commenter": { "type": "string" },
+                  "commentId": { "type": "string" },
+                  "commentUrl": { "type": "string" }
+                }
+              }
+            }
+          }
+        ]
+      },
+      "pr.comment.created": {
+        "allOf": [
+          { "$ref": "#/$defs/prCommon" },
+          {
+            "type": "object",
+            "required": ["comment"],
+            "properties": {
+              "comment": {
+                "type": "object",
+                "required": ["id", "url", "commenter", "edited", "body", "bodyTruncated"],
+                "properties": {
+                  "id": { "type": "string" },
+                  "url": { "type": "string" },
+                  "commenter": { "type": "string" },
+                  "edited": { "type": "boolean" },
+                  "body": { "type": "string", "description": "Cut to 32768 bytes." },
+                  "bodyTruncated": { "type": "boolean" },
+                  "markerError": { "type": "string", "description": "Set when the body has a review block that cannot be read." }
+                }
+              }
+            }
+          }
+        ]
+      },
+      "pr.conflict.detected": {
+        "allOf": [
+          { "$ref": "#/$defs/prCommon" },
+          {
+            "type": "object",
+            "required": ["conflict"],
+            "properties": {
+              "conflict": {
+                "type": "object",
+                "required": ["state"],
+                "properties": {
+                  "state": { "type": "string", "description": "Raw forge value, for example dirty or conflict." }
+                }
+              }
+            }
+          }
+        ]
+      },
+      "pr.merged": {
+        "allOf": [
+          { "$ref": "#/$defs/prCommon" },
+          {
+            "type": "object",
+            "required": ["merge"],
+            "properties": {
+              "merge": {
+                "type": "object",
+                "required": ["commitSha", "mergedBy"],
+                "properties": {
+                  "commitSha": { "$ref": "#/$defs/nullableString" },
+                  "mergedBy": { "$ref": "#/$defs/nullableString" }
+                }
+              }
+            }
+          }
+        ]
+      },
+      "pr.closed": {
+        "allOf": [
+          { "$ref": "#/$defs/prCommon" },
+          {
+            "type": "object",
+            "required": ["closedBy"],
+            "properties": {
+              "closedBy": { "$ref": "#/$defs/nullableString" }
+            }
+          }
+        ]
+      }
+    }
+  }
+}

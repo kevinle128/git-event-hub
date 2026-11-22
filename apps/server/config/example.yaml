@@ -65,10 +65,23 @@ subscribers:
       github: [kevinle128]
       gitlab: [kevin.le]
     sinks:
-      - name: omb
+      # One sink per OMB connector. The URL path is the OMB connector
+      # instance; connector is the source.connector value and fixes the
+      # forge, so filter.providers must name that forge only.
+      - name: omb-github
         type: omb
-        url: http://omb.tailnet.example:4319/hooks/git-event-hub
-        secretEnv: OMB_KEVIN_SECRET
+        connector: github-event
+        url: https://omb.tailnet.example:8451/events/github-event
+        secretEnv: OMB_KEVIN_GITHUB_SECRET
+        filter:
+          providers: [github]
+      - name: omb-gitlab
+        type: omb
+        connector: gitlab-event
+        url: https://omb.tailnet.example:8451/events/gitlab-event
+        secretEnv: OMB_KEVIN_GITLAB_SECRET
+        filter:
+          providers: [gitlab]
 
   - id: lan
     identities:

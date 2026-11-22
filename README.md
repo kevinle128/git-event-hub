@@ -2,13 +2,13 @@
 
 One team-wide hub for pull request events.
 
-The hub receives GitHub App webhooks and GitLab group webhooks. It verifies each webhook and turns it into an event of the **pr-event v1** contract. It sends each event to the person who opened the pull request (PR) or merge request (MR). Later events of the same PR follow the same person, because the hub remembers the PR. A CI event that names only a branch or a commit finds only an open PR, and finds none when two open PRs match, because a guess would send the event to the wrong person.
+The hub receives GitHub App webhooks and GitLab group webhooks. It verifies each webhook and turns it into an event of the **pr-event v1** contract. This is the internal form and the form of the `webhook` sink. The `omb` sink maps each event to OMB event contract v1, the contract that OMB owns, when it sends a batch. It sends each event to the person who opened the pull request (PR) or merge request (MR). Later events of the same PR follow the same person, because the hub remembers the PR. A CI event that names only a branch or a commit finds only an open PR, and finds none when two open PRs match, because a guess would send the event to the wrong person.
 
 The hub stores each webhook in Postgres in one transaction. The transaction writes the receipt, the events and one outbox row for each sink. A dispatcher for each sink then delivers the events and retries them.
 
 - The hub holds only webhook secrets and sink secrets.
 - The hub never calls the GitHub API or the GitLab API.
-- [OpenMausBot](https://github.com/kevinle128/OpenMausBot) (OMB) is one sink. Any HTTP endpoint is another sink.
+- [OpenMausBot](https://github.com/kevinle128/OpenMausBot) (OMB) is one sink type, and it has one sink for each OMB connector. Any HTTP endpoint is another sink.
 
 ## Contents
 
@@ -26,8 +26,10 @@ The hub stores each webhook in Postgres in one transaction. The transaction writ
 ## Architecture
 
 ```text
- GitHub App webhook ──┐                                         ┌─► sink  kevin/omb      ─► OMB
+ GitHub App webhook ──┐                                         ┌─► sink  kevin/omb-github ─► OMB /events/github-event
                       ├─► POST /hooks/{source}                  │
+                                                                ├─► sink  kevin/omb-gitlab ─► OMB /events/gitlab-event
+                                                                │
  GitLab group hook  ──┘        │                                ├─► sink  lan/hermes     ─► any HTTP endpoint
                                ▼                                │
                    ┌──────────────────────┐   ┌───────────┐   ┌─┴────────────────────────────┐
@@ -129,6 +131,8 @@ The hub reads only this block. It never reads the HTML around it.
 - A Go test checks that the schema and the types list the same kinds and providers.
 
 Version 1 may gain optional fields. A consumer must ignore the fields that it does not know. A change that removes or renames a field needs a new version.
+
+OMB event contract v1 belongs to OMB. The hub keeps a copy for its tests in `apps/server/internal/sink/omb/testdata/omb-contract/`.
 
 ## Routing and isolation
 
@@ -328,20 +332,97 @@ Sink entry:
 
 ### `omb` sink
 
-Settings: `url` (absolute http or https URL) and `secretEnv`.
+The sink sends OMB event contract v1. It maps each pr-event v1 event when it sends the batch. The store and the other sinks keep pr-event v1.
+
+Settings:
+
+| Key | Values | Meaning |
+|---|---|---|
+| `url` | absolute http or https URL, required | The intake of one OMB connector instance, for example `https://omb.example:8451/events/github-event`. |
+| `secretEnv` | variable name, required | The HMAC key. The same value is saved in the OMB Vault for that connector. |
+| `connector` | `github-event` or `gitlab-event`, required | The value of `source.connector`. It also fixes the forge: `github-event` takes only `github` events and `gitlab-event` only `gitlab` events. |
+
+The load fails (`-check` and reload) when:
+
+- `connector` is missing or has another value.
+- The `filter.providers` of the sink entry is not exactly the forge of the connector. The error says `connector github-event needs filter.providers: [github] on this sink`. OMB refuses an event of the other forge for good, so the hub checks this at load time.
+- `delivery.batchSize` is above 50. OMB takes at most 50 events per request.
+
+If an event of the other forge reaches the sink anyway, the sink marks it `rejected` and does not send it. The same happens when an event cannot be mapped. If no event of a batch can be mapped, the sink makes no HTTP call.
+
+Use one sink for each OMB connector. Each has its own queue, retries, health and `enabled` toggle. The last part of the URL is the OMB connector instance id. The hub does not check it.
+
+```yaml
+sinks:
+  - name: omb-github
+    type: omb
+    connector: github-event
+    url: https://omb.tailnet.example:8451/events/github-event
+    secretEnv: OMB_KEVIN_GITHUB_SECRET
+    filter:
+      providers: [github]
+  - name: omb-gitlab
+    type: omb
+    connector: gitlab-event
+    url: https://omb.tailnet.example:8451/events/gitlab-event
+    secretEnv: OMB_KEVIN_GITLAB_SECRET
+    filter:
+      providers: [gitlab]
+```
 
 Request:
 
 ```text
 POST <url>
 Content-Type: application/json
+User-Agent: git-event-hub
 X-Omb-Timestamp: <unix seconds>
 X-Omb-Signature: sha256=<hex HMAC-SHA256 of "<timestamp>.<body>">
 
-{"v":1,"events":[ ...pr-event v1... ]}
+{"v":1,"events":[ ...OMB event contract v1... ]}
 ```
 
-The key of the HMAC is the secret. The signed text is the timestamp, a dot and the raw body.
+The key of the HMAC is the secret. The signed text is the timestamp, a dot and the raw body. The hub signs at send time, so a retry gets a new timestamp.
+
+Mapping, for every kind:
+
+| pr-event v1 | OMB event v1 |
+|---|---|
+| `id`, `repo`, `number` | `id`, `subject.repo`, `subject.number` (the id does not change) |
+| `provider` | `subject.forge` |
+| (sink setting `connector`) | `source.connector` |
+| (constant) | `subject.kind` = `pr` |
+| `kind` | `type` |
+| `occurredAt` | `occurredAt` (UTC) |
+| `headSha`, `baseRef`, `branch`, `author` | `data.headSha`, `data.baseRef`, `data.branch`, `data.author` (null stays null) |
+| PR URL | `data.url`, and `correlation.prUrl` when it is not empty |
+| `headSha` | `correlation.headSha` when it is not empty |
+
+`correlation` is left out when it has no key.
+
+| pr-event v1 `kind` | OMB `type` |
+|---|---|
+| `opened` | `pr.opened` |
+| `pushed` | `pr.pushed` |
+| `ci.finished` | `pr.ci.finished` |
+| `review.finished` | `pr.review.finished` |
+| `comment` | `pr.comment.created` |
+| `conflict` | `pr.conflict.detected` |
+| `merged` | `pr.merged` |
+| `closed` | `pr.closed` |
+
+| Kind | pr-event v1 `data` | OMB `data` |
+|---|---|---|
+| opened | `title`, `draft`, `reopened` | the same names |
+| pushed | `before`, `after` | the same names |
+| ci.finished | `source`, `scope`, `name`, `status`, `url`, `runId`, `failedJobs[]` | `check.source`, `check.scope`, `check.name`, `check.status`, `check.url`, `check.runId`, `check.failedJobs[]` (a missing list is `[]`) |
+| review.finished | `source`, `status`, `reviewedSha`, `rounds`, `maxRounds`, `items[]`, `commenter`, `commentId`, `commentUrl` | the same names under `review` (a missing `items` is `[]`) |
+| comment | `commentId`, `url`, `commenter`, `edited`, `body`, `bodyTruncated`, `markerError` | `comment.id`, `comment.url`, `comment.commenter`, `comment.edited`, `comment.body`, `comment.bodyTruncated`, `comment.markerError` |
+| conflict | `state` | `conflict.state` |
+| merged | `mergeCommitSha`, `mergedBy` | `merge.commitSha`, `merge.mergedBy` |
+| closed | `closedBy` | `closedBy` |
+
+**`data.url` is the PR URL.** In OMB, `data.url` is the address of the pull request, and OMB writes it over its PR record. In pr-event v1, the `url` of `opened`, `pushed`, `conflict`, `merged` and `closed` is the PR URL, so it goes to `data.url`. The `url` of `ci.finished` is the check URL and the `url` of `comment` is the comment URL, and `review.finished` has no `url`. For these three kinds `data.url` is `null`, and the URL of the kind goes to `check.url`, `review.commentUrl` or `comment.url`. OMB keeps the PR URL from an earlier event.
 
 Answer: status `200` with
 
@@ -349,7 +430,28 @@ Answer: status `200` with
 {"acked": ["<event id>"], "rejected": ["<event id>"]}
 ```
 
-An id in neither list is sent again later. Any other status, or an answer that is not this JSON, sends the whole batch again.
+A `rejected` item may also be `{"id": "<event id>", "reason": "<text>"}`. The reason goes to the delivery log as `rejected by omb: <reason>`. An id in neither list is sent again later. Any other status, or an answer that is not this JSON, sends the whole batch again. Status `401` means a wrong signature, `404` a connector that is off, `413` a body that is too large and `503` a missing secret in the OMB Vault.
+
+The sink maps at send time, so events that were queued before an upgrade go out in the new form.
+
+Contract copy: `apps/server/internal/sink/omb/testdata/omb-contract/` holds OMB's schema and conformance fixtures, taken from `server/pr-orchestrator/contract` of the OMB repository. `SOURCE.txt` names the OMB commit and the SHA-256 of each file.
+
+```sh
+OMB=<OMB checkout>/server/pr-orchestrator/contract
+DST=apps/server/internal/sink/omb/testdata/omb-contract
+mkdir -p $DST/fixtures/valid $DST/fixtures/invalid
+cp $OMB/omb-event.v1.json $DST/
+cp $OMB/conformance/fixtures/valid/*.json $DST/fixtures/valid/
+cp $OMB/conformance/fixtures/invalid/*.json $DST/fixtures/invalid/
+(cd $DST && find . -name '*.json' | sort | xargs shasum -a 256)   # update SOURCE.txt
+```
+
+`TestVendoredContractIsUnchanged` always runs and stops a hand edit of the copy. `TestVendoredContractMatchesOMBCheckout` compares the copy with OMB and runs only when `OMB_CONTRACT_DIR` is set to OMB's `server/pr-orchestrator/contract` folder. CI cannot see the OMB repository and skips it, so run it by hand before each change of the `omb` sink:
+
+```sh
+OMB_CONTRACT_DIR=<OMB checkout>/server/pr-orchestrator/contract \
+  go test ./internal/sink/omb -run TestVendoredContractMatchesOMBCheckout -count=1 -v
+```
 
 ### `webhook` sink
 
@@ -444,7 +546,7 @@ A source and a sink are adapters. Each one lives in its own package and register
 2. Implement `sink.EventSink` (`internal/sink/sink.go`): `Deliver(ctx, batch)` and `Health(ctx)`. Embed `sink.Tracker` for `Health`.
    - `Deliver` returns one `sink.Outcome` (`Acked`, `Retry` or `Rejected`) for each event. A non-nil error means the whole batch failed.
    - `Deliver` must be safe to call again with events that the consumer already has.
-3. Read the settings in the factory with `sink.DecodeSettings`. It rejects unknown keys. Read secrets only through `spec.Env`. Return an error when a secret variable is empty.
+3. Read the settings in the factory with `sink.DecodeSettings`. `sink.Spec` also gives `Providers` (the `filter.providers` of the sink entry) and `BatchSize` (its effective `delivery.batchSize`), for an adapter that must check them. It rejects unknown keys. Read secrets only through `spec.Env`. Return an error when a secret variable is empty.
 4. Call `sink.Register("<type>", New)` from `init`.
 5. Add one blank import to `internal/app/app.go`.
 6. Add tests. `internal/sink/sinktest` has helpers.
@@ -461,7 +563,7 @@ cp apps/server/.env.example apps/server/.env   # then fill in the values
 docker compose up --build
 ```
 
-- `apps/server/.env` must hold a value for every secret variable that the config names. With the default `example.yaml`, these are `GITHUB_WEBHOOK_SECRET`, `GITLAB_WEBHOOK_TOKEN`, `OMB_KEVIN_SECRET`, `HERMES_LAN_SECRET` and `HUB_API_TOKEN`. The hub does not start when a variable that the config needs is empty. Any value works for a local run.
+- `apps/server/.env` must hold a value for every secret variable that the config names. With the default `example.yaml`, these are `GITHUB_WEBHOOK_SECRET`, `GITLAB_WEBHOOK_TOKEN`, `OMB_KEVIN_GITHUB_SECRET`, `OMB_KEVIN_GITLAB_SECRET`, `HERMES_LAN_SECRET` and `HUB_API_TOKEN`. The hub does not start when a variable that the config needs is empty. Any value works for a local run.
 - Compose starts the hub and Postgres 16. It sets `DATABASE_URL` for the bundled database.
 - It mounts the directory `apps/server/config` read-only. `HUB_CONFIG_FILE` (default `example.yaml`) in `.env` picks the file. An edit of the file reaches the container and the hub reloads it.
 - The hub listens on `127.0.0.1:${HUB_PORT:-8080}`.
@@ -475,7 +577,7 @@ You need a Postgres database and the same secret variables.
 cd apps/server
 export DATABASE_URL='postgres://USER:PASSWORD@localhost:5432/git-event-hub?sslmode=disable'
 export GITHUB_WEBHOOK_SECRET=... GITLAB_WEBHOOK_TOKEN=... HUB_API_TOKEN=...
-export OMB_KEVIN_SECRET=... HERMES_LAN_SECRET=...
+export OMB_KEVIN_GITHUB_SECRET=... OMB_KEVIN_GITLAB_SECRET=... HERMES_LAN_SECRET=...
 go run ./cmd/server -config config/example.yaml
 ```
 
@@ -579,7 +681,7 @@ Set these variables in the environment of the hub. Do not write them in the conf
 | `GITHUB_WEBHOOK_SECRET` | GitHub App webhook secret. |
 | `GITLAB_WEBHOOK_TOKEN` | GitLab secret token (several tokens: comma-separated). |
 | `HUB_API_TOKEN` | Bearer token of `/api/*` and `/metrics`. If it is empty, these endpoints refuse every request. |
-| One variable for each sink | The `secretEnv` of the sink, for example `OMB_KEVIN_SECRET`. The same value must be configured in the consumer so that it can verify the signature. |
+| One variable for each sink | The `secretEnv` of the sink, for example `OMB_KEVIN_GITHUB_SECRET`. The same value must be configured in the consumer so that it can verify the signature. For OMB, save it in the OMB Vault under the secret name of the connector (`GITHUB_EVENT_HUB_SECRET` or `GITLAB_EVENT_HUB_SECRET` by default). |
 
 ### 4. Check
 

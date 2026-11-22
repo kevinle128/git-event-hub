@@ -47,7 +47,8 @@ jobs:
         env:
           GITHUB_WEBHOOK_SECRET: ci
           GITLAB_WEBHOOK_TOKEN: ci
-          OMB_KEVIN_SECRET: ci
+          OMB_KEVIN_GITHUB_SECRET: ci
+          OMB_KEVIN_GITLAB_SECRET: ci
           HERMES_LAN_SECRET: ci
         run: go run ./cmd/server -check -config config/example.yaml
       - name: Docker image builds

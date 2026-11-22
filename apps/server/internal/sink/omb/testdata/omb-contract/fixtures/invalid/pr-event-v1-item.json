@@ -1,0 +1,24 @@
+{
+  "event": {
+    "v": 1,
+    "id": "github:delivery-0001:0",
+    "provider": "github",
+    "repo": "acme/widgets",
+    "number": 42,
+    "kind": "ci.finished",
+    "headSha": "9f2c1d7e4b6a8035c1e2d4f6a8b0c2e4d6f81a3b",
+    "baseRef": "main",
+    "branch": "feat/widget",
+    "author": "octocat",
+    "occurredAt": "2026-11-22T03:00:00Z",
+    "data": {
+      "source": "github-actions",
+      "scope": "job",
+      "name": "test",
+      "status": "failed",
+      "url": "https://github.com/acme/widgets/actions/runs/777/job/888",
+      "failedJobs": []
+    }
+  },
+  "reason": "envelope: / must have required property 'source'"
+}

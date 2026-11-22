@@ -1,0 +1,30 @@
+{
+  "v": 1,
+  "id": "github:delivery-0007:0",
+  "source": {
+    "connector": "github-event"
+  },
+  "type": "pr.merged",
+  "occurredAt": "2026-11-22T03:00:00Z",
+  "subject": {
+    "kind": "pr",
+    "forge": "github",
+    "repo": "acme/widgets",
+    "number": 42
+  },
+  "correlation": {
+    "prUrl": "https://github.com/acme/widgets/pull/42",
+    "headSha": "9f2c1d7e4b6a8035c1e2d4f6a8b0c2e4d6f81a3b"
+  },
+  "data": {
+    "headSha": "9f2c1d7e4b6a8035c1e2d4f6a8b0c2e4d6f81a3b",
+    "baseRef": "main",
+    "branch": "feat/widget",
+    "author": "octocat",
+    "url": "https://github.com/acme/widgets/pull/42",
+    "merge": {
+      "commitSha": "c0ffee1234567890abcdef1234567890abcdef12",
+      "mergedBy": "octocat"
+    }
+  }
+}
