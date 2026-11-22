@@ -603,21 +603,27 @@ Run these in `apps/server`.
 | `go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint run ./...` | Lint. |
 | `go generate ./internal/api` | Regenerate `internal/api/openapi.gen.go` after you edit `api/openapi.yaml`. |
 
-CI (`.github/workflows/ci.yml`) runs: the generated code is up to date, vet, lint, tests on SQLite and on Postgres, `-check` on the example configuration, and the Docker build. The web job runs `bun run check-types` and `bun run build`.
+CI (`.github/workflows/ci.yml`) runs: the generated code is up to date, vet, lint, tests on SQLite and on Postgres, `-check` on the example configuration, `-check` on `deploy/komodo/config/config.yaml`, and the Docker build. The web job runs `bun run check-types` and `bun run build`.
 
 The script `bun run dev:server` runs `go run cmd/server/main.go` without `-config`. Set `HUB_CONFIG` first, or use the commands above.
 
 ## Deploy
 
-The hub is designed for one Komodo stack on the VTC dev server (`103.82.28.49`). The stack is reachable from the internet through Tailscale Funnel on port 8443.
+A merge to `master` builds the hub image and deploys the Komodo stack `git-event-hub` on the VTC dev server (`103.82.28.49`). The workflow is `.github/workflows/deploy.yml`. The operator steps, the Variable names, the runner and the rollback are in `docs/deploy.md`.
 
-- Deploy only when the person asks. The runbook is the skill `deploy-vtc-komodo` of operator-master. Do not run Compose by hand on the server.
+The stack rules for that server are in operator-master at `.claude/skills/deploy-vtc-komodo/SKILL.md`. Agent-Memory uses the same build-and-deploy pattern. Its runbook is `.claude/skills/deploy-agent-memory/SKILL.md` in operator-master.
+
+- The workflow builds `apps/server/Dockerfile` and pushes `ghcr.io/kevinle128/git-event-hub:<short-sha>`. It does not push a `latest` tag. Each tag stays in GHCR.
+- A self-hosted runner with the label `git-event-hub-deploy` then runs `deploy/komodo/deploy-revision.py`. The script sets `HUB_BUILD_REVISION` in the stack environment and deploys the stack. The Komodo API listens on `localhost:9120` of the server, so the runner runs on that server.
+- A deploy starts only after CI on `master` succeeds. The deploy workflow checks `deploy/komodo/config/config.yaml` again before it pushes the image. A pull request does not deploy.
+- Do not run Compose by hand on the server.
 - **Run one instance only.** The dispatchers do not support several replicas. Two instances would send events twice and break the order.
-- **Back up Postgres before a schema change** (a new migration). A code-only deploy needs no backup.
+- **Back up Postgres before a schema change** (a new migration). A code-only deploy needs no backup. The backup command is in `docs/deploy.md`.
 - Migrations run at start. Keep `migrations/postgres` and `migrations/sqlite` in step.
-- Put secrets in the stack environment, never in the config file.
-- Edit the config file to change subscribers or sinks. The hub reloads it. A restart is needed only for `server`, `database`, `log` and environment variables.
-- The image is built from `apps/server/Dockerfile`. It has no cgo and no SQLite. It runs as the user `hub`. The health check calls `/healthz`.
+- Put secrets in Komodo Variables. The stack environment maps them. Never put a secret in the config file or in the compose file. The names are in `docs/deploy.md`.
+- Edit `deploy/komodo/config/config.yaml` to change subscribers or sinks. Compose mounts that directory, so the hub sees a replaced file. A restart is needed only for `server`, `database`, `log` and environment variables. A change reaches the server on the next deploy.
+- The image has no cgo and no SQLite. It runs as the user `hub`. The health check calls `/healthz`.
+- The hub listens on `127.0.0.1` of the server. Tailscale Funnel on port 8443 is the public front. See `docs/deploy.md`.
 
 ## Human setup
 
@@ -673,7 +679,7 @@ Then add the GitLab username of each member to `identities.gitlab`. Add every bo
 
 ### 3. Secrets
 
-Set these variables in the environment of the hub. Do not write them in the config file or in Git.
+Set these variables in the environment of the hub. Do not write them in the config file or in Git. On the Komodo stack, each name is filled from a Variable. The Variable names and the stack environment lines are in `docs/deploy.md`. A person creates those Variables. The deploy job does not write them.
 
 | Variable | Used for |
 |---|---|

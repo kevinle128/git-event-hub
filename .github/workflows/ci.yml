@@ -51,6 +51,15 @@ jobs:
           OMB_KEVIN_GITLAB_SECRET: ci
           HERMES_LAN_SECRET: ci
         run: go run ./cmd/server -check -config config/example.yaml
+      - name: Production configuration is valid
+        env:
+          DATABASE_URL: postgres://postgres:ci@postgres:5432/git-event-hub?sslmode=disable
+          GITHUB_WEBHOOK_SECRET: ci
+          GITLAB_WEBHOOK_TOKEN: ci
+          HUB_API_TOKEN: ci
+          OMB_GITHUB_EVENT_SECRET: ci
+          OMB_GITLAB_EVENT_SECRET: ci
+        run: go run ./cmd/server -check -config ../../deploy/komodo/config/config.yaml
       - name: Docker image builds
         run: docker build -t git-event-hub:ci .
 
